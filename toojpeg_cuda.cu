@@ -556,6 +556,10 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
   // convert from RGB to YCbCr
   float Y[8][8], Cb[8][8], Cr[8][8];
 
+/**************************************************
+ *** this is the part that must be parallelized ***
+ **************************************************/
+
   for (auto mcuY = 0; mcuY < height; mcuY += mcuSize) // each step is either 8 or 16 (=mcuSize)
     for (auto mcuX = 0; mcuX < width; mcuX += mcuSize)
     {

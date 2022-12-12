@@ -675,6 +675,9 @@ NJ_INLINE void njDecodeBlock(nj_component_t* c, unsigned char* out) {
         njColIDCT(&nj.block[coef], &out[coef], c->stride);
 }
 
+/***************************************
+ * this function must be parallelized? *
+ ***************************************/
 NJ_INLINE void njDecodeScan(void) {
     int i, mbx, mby, sbx, sby;
     int rstcount = nj.rstinterval, nextrst = 0;
