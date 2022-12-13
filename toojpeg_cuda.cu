@@ -282,6 +282,7 @@ int16_t encodeBlock(BitWriter& writer, float block[8][8], const float scaled[8*8
       posNonZero = i;
   }
 
+  // TODO move write outside the function
   // same "average color" as previous block ?
   auto diff = DC - lastDC;
   if (diff == 0)
@@ -340,6 +341,125 @@ void generateHuffmanTable(const uint8_t numCodes[16], const uint8_t* values, Bit
 }
 
 } // end of anonymous namespace
+
+
+
+// encription function of a block *** NEW ***
+
+// how to manage the lastYDC variable in parallel encryption ???
+__global__ void Y_encoding (int mcuSize, int width, int height, bool isRGB, float ***Y, float ***Cb, float ***Cr, int16_t lastYDC, int16_t lastCbDC, int16_t lastCrDC,
+	       pixels, mcuY, mcuX, downsample, 	)
+{
+  int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+  // the next two variables are frequently used when checking for image borders
+  const auto maxWidth  = width  - 1; // "last row"
+  const auto maxHeight = height - 1; // "bottom line"
+
+      // YCbCr 4:4:4 format: each MCU is a 8x8 block - the same applies to grayscale images, too
+      // YCbCr 4:2:0 format: each MCU represents a 16x16 block, stored as 4x 8x8 Y-blocks plus 1x 8x8 Cb and 1x 8x8 Cr block)
+      for (auto blockY = 0; blockY < mcuSize; blockY += 8) // iterate once (YCbCr444 and grayscale) or twice (YCbCr420)
+        for (auto blockX = 0; blockX < mcuSize; blockX += 8)
+        {
+          // now we finally have an 8x8 block ...
+          for (auto deltaY = 0; deltaY < 8; deltaY++)
+          {
+            auto column = minimum(mcuX + blockX         , maxWidth); // must not exceed image borders, replicate last row/column if needed
+            auto row    = minimum(mcuY + blockY + deltaY, maxHeight);
+            for (auto deltaX = 0; deltaX < 8; deltaX++)
+            {
+              // find actual pixel position within the current image
+              auto pixelPos = row * int(width) + column; // the cast ensures that we don't run into multiplication overflows
+              if (column < maxWidth)
+                column++;
+
+              // grayscale images have solely a Y channel which can be easily derived from the input pixel by shifting it by 128
+              if (!isRGB)
+              {
+                Y[deltaY][deltaX] = pixels[pixelPos] - 128.f;
+                continue;
+              }
+
+              // RGB: 3 bytes per pixel (whereas grayscale images have only 1 byte per pixel)
+              auto r = pixels[3 * pixelPos    ];
+              auto g = pixels[3 * pixelPos + 1];
+              auto b = pixels[3 * pixelPos + 2];
+
+              Y   [deltaY][deltaX] = rgb2y (r, g, b) - 128; // again, the JPEG standard requires Y to be shifted by 128
+              // YCbCr444 is easy - the more complex YCbCr420 has to be computed about 20 lines below in a second pass
+              if (!downsample)
+              {
+                Cb[deltaY][deltaX] = rgb2cb(r, g, b); // standard RGB-to-YCbCr conversion
+                Cr[deltaY][deltaX] = rgb2cr(r, g, b);
+              }
+            }
+          }
+
+        // encode Y channel
+        lastYDC = encodeBlock(bitWriter, Y, scaledLuminance, lastYDC, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
+        // Cb and Cr are encoded about 50 lines below
+      }
+}
+
+// it is possible to divide the 2 functions? or must be grouped
+
+__global__ void CbCr_encoding () {
+
+  int tid = blockDim.x * blockIdx.x + threadIdx.x;
+  
+      // grayscale images don't need any Cb and Cr information
+      if (!isRGB)
+        continue;
+
+      // ////////////////////////////////////////
+      // the following lines are only relevant for YCbCr420:
+      // average/downsample chrominance of four pixels while respecting the image borders
+      if (downsample)
+        for (short deltaY = 7; downsample && deltaY >= 0; deltaY--) // iterating loop in reverse increases cache read efficiency
+        {
+          auto row      = minimum(mcuY + 2*deltaY, maxHeight); // each deltaX/Y step covers a 2x2 area
+          auto column   =         mcuX;                        // column is updated inside next loop
+          auto pixelPos = (row * int(width) + column) * 3;     // numComponents = 3
+
+          // deltas (in bytes) to next row / column, must not exceed image borders
+          auto rowStep    = (row    < maxHeight) ? 3 * int(width) : 0; // always numComponents*width except for bottom    line
+          auto columnStep = (column < maxWidth ) ? 3              : 0; // always numComponents       except for rightmost pixel
+
+          for (short deltaX = 0; deltaX < 8; deltaX++)
+          {
+            // let's add all four samples (2x2 area)
+            auto right     = pixelPos + columnStep;
+            auto down      = pixelPos +              rowStep;
+            auto downRight = pixelPos + columnStep + rowStep;
+
+            // note: cast from 8 bits to >8 bits to avoid overflows when adding
+            auto r = short(pixels[pixelPos    ]) + pixels[right    ] + pixels[down    ] + pixels[downRight    ];
+            auto g = short(pixels[pixelPos + 1]) + pixels[right + 1] + pixels[down + 1] + pixels[downRight + 1];
+            auto b = short(pixels[pixelPos + 2]) + pixels[right + 2] + pixels[down + 2] + pixels[downRight + 2];
+
+            // convert to Cb and Cr
+            Cb[deltaY][deltaX] = rgb2cb(r, g, b) / 4; // I still have to divide r,g,b by 4 to get their average values
+            Cr[deltaY][deltaX] = rgb2cr(r, g, b) / 4; // it's a bit faster if done AFTER CbCr conversion
+
+            // step forward to next 2x2 area
+            pixelPos += 2*3; // 2 pixels => 6 bytes (2*numComponents)
+            column   += 2;
+
+            // reached right border ?
+            if (column >= maxWidth)
+            {
+              columnStep = 0;
+              pixelPos = ((row + 1) * int(width) - 1) * 3; // same as (row * width + maxWidth) * numComponents => current's row last pixel
+            }
+          }
+        } // end of YCbCr420 code for Cb and Cr
+
+      // encode Cb and Cr
+      lastCbDC = encodeBlock(bitWriter, Cb, scaledChrominance, lastCbDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+      lastCrDC = encodeBlock(bitWriter, Cr, scaledChrominance, lastCrDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+
+}
+
 
 // -------------------- externally visible code --------------------
 
@@ -560,6 +680,34 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
  *** this is the part that must be parallelized ***
  **************************************************/
 
+//  int16_t *lastYDC_dev, *lastCbDC_dev, *lastCrDC_dev;
+
+  int n_blocks = height/mcuSize * width/mcuSize;
+  int n_paral = 1024; // TODO find a good tradeoff value //height/mcuSize * width/mcuSize;
+  int Y_i;
+
+  float Ys[n_parall][8][8], Cbs[n_parall][8][8], Crs[n_parall][8][8];
+  float *Ys_dev, *Cbs_dev, *Crs_dev;
+  
+  cudaMalloc( (void**)&Ys_dev, n_paral*8*8 * sizeof(float) );
+  cudaMalloc( (void**)&Cbs_dev, n_paral*8*8 * sizeof(float) );
+  cudaMalloc( (void**)&Crs_dev, n_paral*8*8 * sizeof(float) );
+
+  for (Y_i = 0; Y_i < n_blocks; Y_i += n_paral){
+    // TODO copy Ys here or in parallel? 
+    cudaMemcpy( Ys_dev, Ys, n_paral*8*8 * sizeof(float),cudaMemcpyHostToDevice );
+    cudaMemcpy( Cbs_dev, Cbs, n_paral*8*8 * sizeof(float),cudaMemcpyHostToDevice );
+    cudaMemcpy( Crs_dev, Crs, n_paral*8*8 * sizeof(float),cudaMemcpyHostToDevice );
+
+    Y_encoding <<<1, n_paral>>> (mcuSize, width, height, isRGB, Ys_dev, Cbs_dev, Crs_dev, null, null, null)// used for huff -> lastYdc, );
+  }
+/*
+
+__global__ void Y_encoding (auto mcuSize, auto width, auto height, bool isRGB, float ***Y, float ***Cb, float ***Cr, int16_t lastYDC, int16_t lastCbDC, int16_t lastCrDC )
+ 
+ */
+
+  /*
   for (auto mcuY = 0; mcuY < height; mcuY += mcuSize) // each step is either 8 or 16 (=mcuSize)
     for (auto mcuX = 0; mcuX < width; mcuX += mcuSize)
     {
@@ -658,6 +806,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
       lastCbDC = encodeBlock(bitWriter, Cb, scaledChrominance, lastCbDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
       lastCrDC = encodeBlock(bitWriter, Cr, scaledChrominance, lastCrDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
     }
+*/
 
   bitWriter.flush(); // now image is completely encoded, write any bits still left in the buffer
 
