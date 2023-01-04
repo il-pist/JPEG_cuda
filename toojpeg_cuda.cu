@@ -348,80 +348,88 @@ if (tid >= n_blocks){
 /****************************TODO*****************************
  ** search an alternative to the encoding of the full image **
  *************************************************************/
-int16_t encodeAll(BitWriter& writer, float* block64, int n_blocks, int16_t lastDC, int width,
+
+
+
+int16_t encodeComponent(BitWriter& writer, float* block64, int block_i, int16_t DC_last,
                     const BitCode huffmanDC[256], const BitCode huffmanAC[256], const BitCode* codewords)
 {
-	int DC, DC_last;
+	int DC;
 
-	DC_last=lastDC;
+	// TODO solve the block_i value (the inner matrix is not consecutive) 
+	// encode DC (the first coefficient is the "average color" of the 8x8 block)
+	DC = int(block64[0 + block_i*64] + (block64[0 + block_i*64] >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
 
-	for (auto block_i=0; block_i < n_blocks; block_i++){
-
-		// TODO solve the block_i value (the inner matrix is not consecutive) 
-		// encode DC (the first coefficient is the "average color" of the 8x8 block)
-		DC = int(block64[0 + block_i*64] + (block64[0 + block_i*64] >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
-
-		// quantize and zigzag the other 63 coefficients
-		auto posNonZero = 0; // find last coefficient which is not zero (because trailing zeros are encoded differently)
-		int16_t quantized[8*8];
-		for (auto i = 1; i < 8*8; i++) // start at 1 because block64[0]=DC was already processed
-		{
+	// quantize and zigzag the other 63 coefficients
+	auto posNonZero = 0; // find last coefficient which is not zero (because trailing zeros are encoded differently)
+	int16_t quantized[8*8];
+	for (auto i = 1; i < 8*8; i++) // start at 1 because block64[0]=DC was already processed
+	{
 //TODO check how to access with zigzag 
-			auto value = block64[ZigZagInv[i] + block_i*64];
-			// round to nearest integer
-			quantized[i] = int(value + (value >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
-			// remember offset of last non-zero coefficient
-			if (quantized[i] != 0)
-				posNonZero = i;
-		}
-
-		// same "average color" as previous block ?
-		auto diff = DC - DC_last;
-		if (diff == 0)
-			writer << huffmanDC[0x00];   // yes, write a special short symbol
-		else
-		{
-			auto bits = codewords[diff]; // nope, encode the difference to previous block's average color
-			writer << huffmanDC[bits.numBits] << bits;
-		}
-
-		// encode ACs (quantized[1..63])
-		auto offset = 0; // upper 4 bits count the number of consecutive zeros
-		for (auto i = 1; i <= posNonZero; i++) // quantized[0] was already written, skip all trailing zeros, too
-		{
-			// zeros are encoded in a special way
-			while (quantized[i] == 0) // found another zero ?
-			{
-				offset    += 0x10; // add 1 to the upper 4 bits
-				// split into blocks of at most 16 consecutive zeros
-				if (offset > 0xF0) // remember, the counter is in the upper 4 bits, 0xF = 15
-				{
-					writer << huffmanAC[0xF0]; // 0xF0 is a special code for "16 zeros"
-					offset = 0;
-				}
-				i++;
-			}
-
-			auto encoded = codewords[quantized[i]];
-			// combine number of zeros with the number of bits of the next non-zero value
-			writer << huffmanAC[offset + encoded.numBits] << encoded; // and the value itself
-			offset = 0;
-		}
-
-		// send end-of-block code (0x00), only needed if there are trailing zeros
-		if (posNonZero < 8*8 - 1) // = 63
-		{
-			writer << huffmanAC[0x00];
-		}
-
-		// overwrite the lastDC value
-		DC_last = DC;
+		auto value = block64[ZigZagInv[i] + block_i*64];
+		// round to nearest integer
+		quantized[i] = int(value + (value >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
+		// remember offset of last non-zero coefficient
+		if (quantized[i] != 0)
+			posNonZero = i;
 	}
+
+	// same "average color" as previous block ?
+	auto diff = DC - DC_last;
+	if (diff == 0)
+		writer << huffmanDC[0x00];   // yes, write a special short symbol
+	else
+	{
+		auto bits = codewords[diff]; // nope, encode the difference to previous block's average color
+		writer << huffmanDC[bits.numBits] << bits;
+	}
+
+	// encode ACs (quantized[1..63])
+	auto offset = 0; // upper 4 bits count the number of consecutive zeros
+	for (auto i = 1; i <= posNonZero; i++) // quantized[0] was already written, skip all trailing zeros, too
+	{
+		// zeros are encoded in a special way
+		while (quantized[i] == 0) // found another zero ?
+		{
+			offset    += 0x10; // add 1 to the upper 4 bits
+			// split into blocks of at most 16 consecutive zeros
+			if (offset > 0xF0) // remember, the counter is in the upper 4 bits, 0xF = 15
+			{
+				writer << huffmanAC[0xF0]; // 0xF0 is a special code for "16 zeros"
+				offset = 0;
+			}
+			i++;
+		}
+
+		auto encoded = codewords[quantized[i]];
+		// combine number of zeros with the number of bits of the next non-zero value
+		writer << huffmanAC[offset + encoded.numBits] << encoded; // and the value itself
+		offset = 0;
+	}
+
+	// send end-of-block code (0x00), only needed if there are trailing zeros
+	if (posNonZero < 8*8 - 1) // = 63
+	{
+		writer << huffmanAC[0x00];
+	}
+
+	// overwrite the lastDC value
+//	DC_last = DC;
 
   return DC;
 	
 }
 
+void encodeAll(BitWriter& writer, float* block64Y, float* block64Cb, float* block64Cr, int n_blocks, const BitCode huffmanDCLum[256], const BitCode huffmanACLum[256], const BitCode huffmanDCChr[256], const BitCode huffmanACChr[256], const BitCode* codewords)
+{
+	int DC_lastY=0, DC_lastCb=0, DC_lastCr=0;
+
+	for (auto block_i=0; block_i < n_blocks; block_i++){
+		DC_lastY  = encodeComponent(writer, block64Y, block_i, DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+		DC_lastCb = encodeComponent(writer, block64Cb, block_i, DC_lastCb, huffmanDCChr, huffmanACChr, codewords);
+		DC_lastCr = encodeComponent(writer, block64Cr, block_i, DC_lastCr, huffmanDCChr, huffmanACChr, codewords);
+	}
+}
 
 // Jon's code includes the pre-generated Huffman codes
 // I don't like these "magic constants" and compute them on my own :-)
@@ -657,7 +665,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
   const auto mcuSize  = 8 * sampling;
 
   // average color of the previous MCU
-  int16_t lastYDC = 0, lastCbDC = 0, lastCrDC = 0;
+//  int16_t lastYDC = 0, lastCbDC = 0, lastCrDC = 0;
   // convert from RGB to YCbCr
 //  float Y[8][8], Cb[8][8], Cr[8][8];
 
@@ -837,7 +845,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 //		if (block64Y[k] != 0)
 //  		printf ("%d = %f \n", k, block64Y[k]);
 
-	lastYDC = encodeAll(bitWriter, block64Y, n_blocks, lastYDC, width, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
+//	lastYDC = encodeAll(bitWriter, block64Y, n_blocks, lastYDC, width, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
 
 	
 // encode Cb and Cr
@@ -853,7 +861,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 //		if (block64Cb[k] != 0)
 //  		printf ("%d = %f \n", k, block64Cb[k]);
 
-	lastCbDC = encodeAll(bitWriter, block64Cb, n_blocks, lastCbDC, width, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+//	lastCbDC = encodeAll(bitWriter, block64Cb, n_blocks, lastCbDC, width, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
 
 //      lastCrDC = encodeBlock(bitWriter, Cr, scaledChrominance, lastCrDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
   encodeBlock<<<dimGrid,dimBlock>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
@@ -862,7 +870,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	cudaMemcpy( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost );
 	cudaFree (dev_block64Cr);
 
-	lastCrDC = encodeAll(bitWriter, block64Cr, n_blocks, lastCrDC, width, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
 
 	cudaDeviceReset();
 
