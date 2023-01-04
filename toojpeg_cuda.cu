@@ -3,7 +3,7 @@
 // written by Stephan Brumme, 2018-2019
 // see https://create.stephan-brumme.com/toojpeg/
 //
-
+#include <stdio.h>
 #include "toojpeg.h"
 
 // - the "official" specifications: https://www.w3.org/Graphics/JPEG/itu-t81.pdf and https://www.w3.org/Graphics/JPEG/jfif3.pdf
@@ -203,7 +203,7 @@ float rgb2cb(float r, float g, float b) { return -0.16874f * r -0.33126f * g +0.
 float rgb2cr(float r, float g, float b) { return +0.5f     * r -0.41869f * g -0.08131f * b; }
 
 // forward DCT computation "in one dimension" (fast AAN algorithm by Arai, Agui and Nakajima: "A fast DCT-SQ scheme for images")
-void DCT(float block[8*8], uint8_t stride) // stride must be 1 (=horizontal) or 8 (=vertical)
+__device__ void DCT(float block[8*8], uint8_t stride) // stride must be 1 (=horizontal) or 8 (=vertical)
 {
   const auto SqrtHalfSqrt = 1.306562965f; //    sqrt((2 + sqrt(2)) / 2) = cos(pi * 1 / 8) * sqrt(2)
   const auto InvSqrt      = 0.707106781f; // 1 / sqrt(2)                = cos(pi * 2 / 8)
@@ -249,11 +249,74 @@ void DCT(float block[8*8], uint8_t stride) // stride must be 1 (=horizontal) or 
 }
 
 // run DCT, quantize and write Huffman bit codes
-int16_t encodeBlock(BitWriter& writer, float block[8][8], const float scaled[8*8], int16_t lastDC,
-                    const BitCode huffmanDC[256], const BitCode huffmanAC[256], const BitCode* codewords)
+//int16_t encodeBlock(BitWriter& writer, float block[8][8], const float scaled[8*8], int16_t lastDC,
+//                    const BitCode huffmanDC[256], const BitCode huffmanAC[256], const BitCode* codewords)
+
+
+inline bool failed(cudaError_t error)
 {
-  // "linearize" the 8x8 block, treat it as a flat array of 64 floats
-  auto block64 = (float*) block;
+  if (cudaSuccess == error)
+    return false;
+
+  fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(error));
+  return true;
+}
+
+// block 64 is an array of block 8x8
+__global__ void encodeBlock(float* image, float scaled[64], int width, int height, float *v_block64)
+{
+
+	unsigned int tid = (blockIdx.x*blockDim.x) + threadIdx.x;
+
+	unsigned int n_blocks = width*height/64;
+
+	// "linearize" the 8x8 block, treat it as a flat array of 64 floats
+	// copy an image 8x8 block into a linear vector
+if (tid >= n_blocks){
+//	printf("%d\n", tid);
+	return;
+}
+	//TODO search if it is possible to avoid this copy
+  float block64[64];
+	
+	int id1 = ((tid*8) % width);					//starting index of image block (column)
+	int id2 = ( (tid*8) / width) * 8;				//starting index of image block (row)
+	
+	for (int i = 0; i < 8; i++){
+		for (int j = 0; j < 8; j++){
+			// TODO check borders
+			// if exceed the borders copy last column 
+//			if (id1 + j < width) 
+//			{
+//				// if exceed the borders copy last row
+//				if (id2 + i < height)
+//				{
+					block64 [i*8 + j] = image[(i*width + j) + (id1 + id2*width)];
+//				} 
+//				else 
+//				{
+//					block64 [i*8 + j] = block64 [(i-1)*8 + j];
+//				}
+//			} 
+//			else 
+//			{
+//				// if exceed the borders copy last row
+//				if (id2 + i < height)
+//				{
+//					block64 [i*8 + j] = block64 [i*8 + (j-1)];
+//				} 
+//				else 
+//				{
+//					block64 [i*8 + j] = block64 [(i-1)*8 + (j-1)];
+//				}
+//			}
+
+//							__syncthreads();
+		}
+	}
+
+
+	// TODO PARALLELIZE DCT 
 
   // DCT: rows
   for (auto offset = 0; offset < 8; offset++)
@@ -262,66 +325,103 @@ int16_t encodeBlock(BitWriter& writer, float block[8][8], const float scaled[8*8
   for (auto offset = 0; offset < 8; offset++)
     DCT(block64 + offset*1, 8);
 
+
+ ////////////////// TODO CHECK WHY THE SCALED VALUE CREATES SEGMENTATION ERRORS ///////////////////////
   // scale
-  for (auto i = 0; i < 8*8; i++)
-    block64[i] *= scaled[i];
+//  float scaled_int[64];
 
-  // encode DC (the first coefficient is the "average color" of the 8x8 block)
-  auto DC = int(block64[0] + (block64[0] >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
+//  for (int i = 0; i < 8*8; i++){
+//		scaled_int[i] = scaled[i];
+//	}
 
-  // quantize and zigzag the other 63 coefficients
-  auto posNonZero = 0; // find last coefficient which is not zero (because trailing zeros are encoded differently)
-  int16_t quantized[8*8];
-  for (auto i = 1; i < 8*8; i++) // start at 1 because block64[0]=DC was already processed
-  {
-    auto value = block64[ZigZagInv[i]];
-    // round to nearest integer
-    quantized[i] = int(value + (value >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
-    // remember offset of last non-zero coefficient
-    if (quantized[i] != 0)
-      posNonZero = i;
-  }
+  for (int i = 0; i < 8*8; i++){
+//    block64[i] *= scaled[i];
+		v_block64[tid*64 + i] = (block64[i] * scaled[i]);
+//		if (tid == 1)
+//		printf("elem n %d:		%f\n", tid*64+i, v_block64[tid*64+i]);
+	}
 
-  // TODO move write outside the function
-  // same "average color" as previous block ?
-  auto diff = DC - lastDC;
-  if (diff == 0)
-    writer << huffmanDC[0x00];   // yes, write a special short symbol
-  else
-  {
-    auto bits = codewords[diff]; // nope, encode the difference to previous block's average color
-    writer << huffmanDC[bits.numBits] << bits;
-  }
+	return;
 
-  // encode ACs (quantized[1..63])
-  auto offset = 0; // upper 4 bits count the number of consecutive zeros
-  for (auto i = 1; i <= posNonZero; i++) // quantized[0] was already written, skip all trailing zeros, too
-  {
-    // zeros are encoded in a special way
-    while (quantized[i] == 0) // found another zero ?
-    {
-      offset    += 0x10; // add 1 to the upper 4 bits
-      // split into blocks of at most 16 consecutive zeros
-      if (offset > 0xF0) // remember, the counter is in the upper 4 bits, 0xF = 15
-      {
-        writer << huffmanAC[0xF0]; // 0xF0 is a special code for "16 zeros"
-        offset = 0;
-      }
-      i++;
-    }
+}
 
-    auto encoded = codewords[quantized[i]];
-    // combine number of zeros with the number of bits of the next non-zero value
-    writer << huffmanAC[offset + encoded.numBits] << encoded; // and the value itself
-    offset = 0;
-  }
+/****************************TODO*****************************
+ ** search an alternative to the encoding of the full image **
+ *************************************************************/
+int16_t encodeAll(BitWriter& writer, float* block64, int n_blocks, int16_t lastDC, int width,
+                    const BitCode huffmanDC[256], const BitCode huffmanAC[256], const BitCode* codewords)
+{
+	int DC, DC_last;
 
-  // send end-of-block code (0x00), only needed if there are trailing zeros
-  if (posNonZero < 8*8 - 1) // = 63
-    writer << huffmanAC[0x00];
+	DC_last=lastDC;
+
+	for (auto block_i=0; block_i < n_blocks; block_i++){
+
+		// TODO solve the block_i value (the inner matrix is not consecutive) 
+		// encode DC (the first coefficient is the "average color" of the 8x8 block)
+		DC = int(block64[0 + block_i*64] + (block64[0 + block_i*64] >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
+
+		// quantize and zigzag the other 63 coefficients
+		auto posNonZero = 0; // find last coefficient which is not zero (because trailing zeros are encoded differently)
+		int16_t quantized[8*8];
+		for (auto i = 1; i < 8*8; i++) // start at 1 because block64[0]=DC was already processed
+		{
+//TODO check how to access with zigzag 
+			auto value = block64[ZigZagInv[i] + block_i*64];
+			// round to nearest integer
+			quantized[i] = int(value + (value >= 0 ? +0.5f : -0.5f)); // C++11's nearbyint() achieves a similar effect
+			// remember offset of last non-zero coefficient
+			if (quantized[i] != 0)
+				posNonZero = i;
+		}
+
+		// same "average color" as previous block ?
+		auto diff = DC - DC_last;
+		if (diff == 0)
+			writer << huffmanDC[0x00];   // yes, write a special short symbol
+		else
+		{
+			auto bits = codewords[diff]; // nope, encode the difference to previous block's average color
+			writer << huffmanDC[bits.numBits] << bits;
+		}
+
+		// encode ACs (quantized[1..63])
+		auto offset = 0; // upper 4 bits count the number of consecutive zeros
+		for (auto i = 1; i <= posNonZero; i++) // quantized[0] was already written, skip all trailing zeros, too
+		{
+			// zeros are encoded in a special way
+			while (quantized[i] == 0) // found another zero ?
+			{
+				offset    += 0x10; // add 1 to the upper 4 bits
+				// split into blocks of at most 16 consecutive zeros
+				if (offset > 0xF0) // remember, the counter is in the upper 4 bits, 0xF = 15
+				{
+					writer << huffmanAC[0xF0]; // 0xF0 is a special code for "16 zeros"
+					offset = 0;
+				}
+				i++;
+			}
+
+			auto encoded = codewords[quantized[i]];
+			// combine number of zeros with the number of bits of the next non-zero value
+			writer << huffmanAC[offset + encoded.numBits] << encoded; // and the value itself
+			offset = 0;
+		}
+
+		// send end-of-block code (0x00), only needed if there are trailing zeros
+		if (posNonZero < 8*8 - 1) // = 63
+		{
+			writer << huffmanAC[0x00];
+		}
+
+		// overwrite the lastDC value
+		DC_last = DC;
+	}
 
   return DC;
+	
 }
+
 
 // Jon's code includes the pre-generated Huffman codes
 // I don't like these "magic constants" and compute them on my own :-)
@@ -342,125 +442,6 @@ void generateHuffmanTable(const uint8_t numCodes[16], const uint8_t* values, Bit
 
 } // end of anonymous namespace
 
-
-
-// encription function of a block *** NEW ***
-
-// how to manage the lastYDC variable in parallel encryption ???
-__global__ void Y_encoding (int mcuSize, int width, int height, bool isRGB, float ***Y, float ***Cb, float ***Cr, int16_t lastYDC, int16_t lastCbDC, int16_t lastCrDC,
-	       pixels, mcuY, mcuX, downsample, 	)
-{
-  int tid = blockDim.x * blockIdx.x + threadIdx.x;
-
-  // the next two variables are frequently used when checking for image borders
-  const auto maxWidth  = width  - 1; // "last row"
-  const auto maxHeight = height - 1; // "bottom line"
-
-      // YCbCr 4:4:4 format: each MCU is a 8x8 block - the same applies to grayscale images, too
-      // YCbCr 4:2:0 format: each MCU represents a 16x16 block, stored as 4x 8x8 Y-blocks plus 1x 8x8 Cb and 1x 8x8 Cr block)
-      for (auto blockY = 0; blockY < mcuSize; blockY += 8) // iterate once (YCbCr444 and grayscale) or twice (YCbCr420)
-        for (auto blockX = 0; blockX < mcuSize; blockX += 8)
-        {
-          // now we finally have an 8x8 block ...
-          for (auto deltaY = 0; deltaY < 8; deltaY++)
-          {
-            auto column = minimum(mcuX + blockX         , maxWidth); // must not exceed image borders, replicate last row/column if needed
-            auto row    = minimum(mcuY + blockY + deltaY, maxHeight);
-            for (auto deltaX = 0; deltaX < 8; deltaX++)
-            {
-              // find actual pixel position within the current image
-              auto pixelPos = row * int(width) + column; // the cast ensures that we don't run into multiplication overflows
-              if (column < maxWidth)
-                column++;
-
-              // grayscale images have solely a Y channel which can be easily derived from the input pixel by shifting it by 128
-              if (!isRGB)
-              {
-                Y[deltaY][deltaX] = pixels[pixelPos] - 128.f;
-                continue;
-              }
-
-              // RGB: 3 bytes per pixel (whereas grayscale images have only 1 byte per pixel)
-              auto r = pixels[3 * pixelPos    ];
-              auto g = pixels[3 * pixelPos + 1];
-              auto b = pixels[3 * pixelPos + 2];
-
-              Y   [deltaY][deltaX] = rgb2y (r, g, b) - 128; // again, the JPEG standard requires Y to be shifted by 128
-              // YCbCr444 is easy - the more complex YCbCr420 has to be computed about 20 lines below in a second pass
-              if (!downsample)
-              {
-                Cb[deltaY][deltaX] = rgb2cb(r, g, b); // standard RGB-to-YCbCr conversion
-                Cr[deltaY][deltaX] = rgb2cr(r, g, b);
-              }
-            }
-          }
-
-        // encode Y channel
-        lastYDC = encodeBlock(bitWriter, Y, scaledLuminance, lastYDC, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
-        // Cb and Cr are encoded about 50 lines below
-      }
-}
-
-// it is possible to divide the 2 functions? or must be grouped
-
-__global__ void CbCr_encoding () {
-
-  int tid = blockDim.x * blockIdx.x + threadIdx.x;
-  
-      // grayscale images don't need any Cb and Cr information
-      if (!isRGB)
-        continue;
-
-      // ////////////////////////////////////////
-      // the following lines are only relevant for YCbCr420:
-      // average/downsample chrominance of four pixels while respecting the image borders
-      if (downsample)
-        for (short deltaY = 7; downsample && deltaY >= 0; deltaY--) // iterating loop in reverse increases cache read efficiency
-        {
-          auto row      = minimum(mcuY + 2*deltaY, maxHeight); // each deltaX/Y step covers a 2x2 area
-          auto column   =         mcuX;                        // column is updated inside next loop
-          auto pixelPos = (row * int(width) + column) * 3;     // numComponents = 3
-
-          // deltas (in bytes) to next row / column, must not exceed image borders
-          auto rowStep    = (row    < maxHeight) ? 3 * int(width) : 0; // always numComponents*width except for bottom    line
-          auto columnStep = (column < maxWidth ) ? 3              : 0; // always numComponents       except for rightmost pixel
-
-          for (short deltaX = 0; deltaX < 8; deltaX++)
-          {
-            // let's add all four samples (2x2 area)
-            auto right     = pixelPos + columnStep;
-            auto down      = pixelPos +              rowStep;
-            auto downRight = pixelPos + columnStep + rowStep;
-
-            // note: cast from 8 bits to >8 bits to avoid overflows when adding
-            auto r = short(pixels[pixelPos    ]) + pixels[right    ] + pixels[down    ] + pixels[downRight    ];
-            auto g = short(pixels[pixelPos + 1]) + pixels[right + 1] + pixels[down + 1] + pixels[downRight + 1];
-            auto b = short(pixels[pixelPos + 2]) + pixels[right + 2] + pixels[down + 2] + pixels[downRight + 2];
-
-            // convert to Cb and Cr
-            Cb[deltaY][deltaX] = rgb2cb(r, g, b) / 4; // I still have to divide r,g,b by 4 to get their average values
-            Cr[deltaY][deltaX] = rgb2cr(r, g, b) / 4; // it's a bit faster if done AFTER CbCr conversion
-
-            // step forward to next 2x2 area
-            pixelPos += 2*3; // 2 pixels => 6 bytes (2*numComponents)
-            column   += 2;
-
-            // reached right border ?
-            if (column >= maxWidth)
-            {
-              columnStep = 0;
-              pixelPos = ((row + 1) * int(width) - 1) * 3; // same as (row * width + maxWidth) * numComponents => current's row last pixel
-            }
-          }
-        } // end of YCbCr420 code for Cb and Cr
-
-      // encode Cb and Cr
-      lastCbDC = encodeBlock(bitWriter, Cb, scaledChrominance, lastCbDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
-      lastCrDC = encodeBlock(bitWriter, Cr, scaledChrominance, lastCrDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
-
-}
-
-
 // -------------------- externally visible code --------------------
 
 namespace TooJpeg
@@ -469,6 +450,10 @@ namespace TooJpeg
 bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width, unsigned short height,
                bool isRGB, unsigned char quality_, bool downsample, const char* comment)
 {
+
+	// reset GPU 
+
+
   // reject invalid pointers
   if (output == nullptr || pixels_ == nullptr)
     return false;
@@ -674,40 +659,24 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
   // average color of the previous MCU
   int16_t lastYDC = 0, lastCbDC = 0, lastCrDC = 0;
   // convert from RGB to YCbCr
-  float Y[8][8], Cb[8][8], Cr[8][8];
+//  float Y[8][8], Cb[8][8], Cr[8][8];
 
 /**************************************************
  *** this is the part that must be parallelized ***
  **************************************************/
 
-//  int16_t *lastYDC_dev, *lastCbDC_dev, *lastCrDC_dev;
-
   int n_blocks = height/mcuSize * width/mcuSize;
-  int n_paral = 1024; // TODO find a good tradeoff value //height/mcuSize * width/mcuSize;
-  int Y_i;
 
-  float Ys[n_parall][8][8], Cbs[n_parall][8][8], Crs[n_parall][8][8];
-  float *Ys_dev, *Cbs_dev, *Crs_dev;
-  
-  cudaMalloc( (void**)&Ys_dev, n_paral*8*8 * sizeof(float) );
-  cudaMalloc( (void**)&Cbs_dev, n_paral*8*8 * sizeof(float) );
-  cudaMalloc( (void**)&Crs_dev, n_paral*8*8 * sizeof(float) );
+//	printf("%d", height);
+//	printf("%d", width);
+//	printf("%d", mcuSize);
 
-  for (Y_i = 0; Y_i < n_blocks; Y_i += n_paral){
-    // TODO copy Ys here or in parallel? 
-    cudaMemcpy( Ys_dev, Ys, n_paral*8*8 * sizeof(float),cudaMemcpyHostToDevice );
-    cudaMemcpy( Cbs_dev, Cbs, n_paral*8*8 * sizeof(float),cudaMemcpyHostToDevice );
-    cudaMemcpy( Crs_dev, Crs, n_paral*8*8 * sizeof(float),cudaMemcpyHostToDevice );
+	float *Y, *Cr, *Cb;  
 
-    Y_encoding <<<1, n_paral>>> (mcuSize, width, height, isRGB, Ys_dev, Cbs_dev, Crs_dev, null, null, null)// used for huff -> lastYdc, );
-  }
-/*
+	Y = (float *) malloc( width*height * sizeof(float) );
+	Cb =(float *) malloc( width*height * sizeof(float) );
+	Cr =(float *) malloc( width*height * sizeof(float) );
 
-__global__ void Y_encoding (auto mcuSize, auto width, auto height, bool isRGB, float ***Y, float ***Cb, float ***Cr, int16_t lastYDC, int16_t lastCbDC, int16_t lastCrDC )
- 
- */
-
-  /*
   for (auto mcuY = 0; mcuY < height; mcuY += mcuSize) // each step is either 8 or 16 (=mcuSize)
     for (auto mcuX = 0; mcuX < width; mcuX += mcuSize)
     {
@@ -731,7 +700,8 @@ __global__ void Y_encoding (auto mcuSize, auto width, auto height, bool isRGB, f
               // grayscale images have solely a Y channel which can be easily derived from the input pixel by shifting it by 128
               if (!isRGB)
               {
-                Y[deltaY][deltaX] = pixels[pixelPos] - 128.f;
+//                Y[deltaY][deltaX] = pixels[pixelPos] - 128.f;
+                Y[pixelPos] = pixels[pixelPos] - 128.f;
                 continue;
               }
 
@@ -740,20 +710,24 @@ __global__ void Y_encoding (auto mcuSize, auto width, auto height, bool isRGB, f
               auto g = pixels[3 * pixelPos + 1];
               auto b = pixels[3 * pixelPos + 2];
 
-              Y   [deltaY][deltaX] = rgb2y (r, g, b) - 128; // again, the JPEG standard requires Y to be shifted by 128
+//              Y   [deltaY][deltaX] = rgb2y (r, g, b) - 128; // again, the JPEG standard requires Y to be shifted by 128
+              Y [pixelPos] = rgb2y (r, g, b) - 128; // again, the JPEG standard requires Y to be shifted by 128
               // YCbCr444 is easy - the more complex YCbCr420 has to be computed about 20 lines below in a second pass
               if (!downsample)
               {
-                Cb[deltaY][deltaX] = rgb2cb(r, g, b); // standard RGB-to-YCbCr conversion
-                Cr[deltaY][deltaX] = rgb2cr(r, g, b);
+//                Cb[deltaY][deltaX] = rgb2cb(r, g, b); // standard RGB-to-YCbCr conversion
+//                Cr[deltaY][deltaX] = rgb2cr(r, g, b);
+                Cb [pixelPos] = rgb2cb(r, g, b); // standard RGB-to-YCbCr conversion
+                Cr [pixelPos] = rgb2cr(r, g, b);
               }
             }
           }
 
-        // encode Y channel
-        lastYDC = encodeBlock(bitWriter, Y, scaledLuminance, lastYDC, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
-        // Cb and Cr are encoded about 50 lines below
-      }
+	// save the Y value of this block (TODO could be parallelized???)
+	//        lastYDC = encodeBlock(bitWriter, Y, scaledLuminance, lastYDC, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
+				
+					// Cb and Cr are encoded about 50 lines below
+				}
 
       // grayscale images don't need any Cb and Cr information
       if (!isRGB)
@@ -786,8 +760,9 @@ __global__ void Y_encoding (auto mcuSize, auto width, auto height, bool isRGB, f
             auto b = short(pixels[pixelPos + 2]) + pixels[right + 2] + pixels[down + 2] + pixels[downRight + 2];
 
             // convert to Cb and Cr
-            Cb[deltaY][deltaX] = rgb2cb(r, g, b) / 4; // I still have to divide r,g,b by 4 to get their average values
-            Cr[deltaY][deltaX] = rgb2cr(r, g, b) / 4; // it's a bit faster if done AFTER CbCr conversion
+            Cb [pixelPos/3] = rgb2cb(r, g, b) / 4; // I still have to divide r,g,b by 4 to get their average values
+            Cr [pixelPos/3] = rgb2cr(r, g, b) / 4; // it's a bit faster if done AFTER CbCr conversion
+//TODO recheck if pixelPos is correct
 
             // step forward to next 2x2 area
             pixelPos += 2*3; // 2 pixels => 6 bytes (2*numComponents)
@@ -802,11 +777,94 @@ __global__ void Y_encoding (auto mcuSize, auto width, auto height, bool isRGB, f
           }
         } // end of YCbCr420 code for Cb and Cr
 
-      // encode Cb and Cr
-      lastCbDC = encodeBlock(bitWriter, Cb, scaledChrominance, lastCbDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
-      lastCrDC = encodeBlock(bitWriter, Cr, scaledChrominance, lastCrDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
     }
-*/
+
+//	float block64Y[n_blocks * 64], block64Cr[n_blocks * 64], block64Cb[n_blocks * 64];
+	float *block64Y, *block64Cr, *block64Cb;
+
+	block64Y = (float *) malloc( n_blocks * 64 * sizeof(float) );
+	block64Cb =(float *) malloc( n_blocks * 64 * sizeof(float) );
+	block64Cr =(float *) malloc( n_blocks * 64 * sizeof(float) );
+
+	float *dev_block64Y, *dev_block64Cr, *dev_block64Cb;
+	float *dev_Y, *dev_Cr, *dev_Cb;
+
+	cudaMalloc( (void**)&dev_Y,  width*height * sizeof(float) );
+	cudaMalloc( (void**)&dev_Cr, width*height * sizeof(float) );
+	cudaMalloc( (void**)&dev_Cb, width*height * sizeof(float) );
+	cudaMemcpy( dev_Y, Y,   width*height * sizeof(float),cudaMemcpyHostToDevice );
+	cudaMemcpy( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice );
+	cudaMemcpy( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice );
+
+  float *dev_scaledLum, *dev_scaledChr;
+
+	cudaMalloc( (void**)&dev_scaledLum, 64 * sizeof(float) );
+	cudaMalloc( (void**)&dev_scaledChr, 64 * sizeof(float) );
+	cudaMemcpy( dev_scaledLum, scaledLuminance, 	64 * sizeof(float),cudaMemcpyHostToDevice );
+	cudaMemcpy( dev_scaledChr, scaledChrominance, 64 * sizeof(float),cudaMemcpyHostToDevice );
+
+	if (cudaMalloc( (void**)&dev_block64Y,  n_blocks * 64 * sizeof(float) ) != cudaSuccess)
+		printf("mallocError\n");
+	cudaMalloc( (void**)&dev_block64Cr, n_blocks * 64 * sizeof(float) );
+	cudaMalloc( (void**)&dev_block64Cb, n_blocks * 64 * sizeof(float) );
+
+	int dimBlock = (n_blocks+31)/32;	//roundup 
+	int dimGrid = 32;
+//	dim3 dimBlock ((n_blocks+31)/32, 1);	//roundup 
+//	dim3 dimGrid (32, 1);
+// encode Y 
+
+//	printf("%d", n_blocks);
+  encodeBlock<<<dimGrid,dimBlock>>>(dev_Y, dev_scaledLum, width, height, dev_block64Y);
+
+
+				if (failed(cudaPeekAtLastError()))
+        {
+            failed(cudaFree(dev_block64Y));
+        }
+        if (failed(cudaDeviceSynchronize()))
+        {
+            failed(cudaFree(dev_block64Y));
+        }
+
+	cudaDeviceSynchronize();
+
+	cudaFree (dev_Y);
+	cudaMemcpy( block64Y, dev_block64Y, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost );
+	cudaFree (dev_block64Y);
+
+//	for (int k=0; k<n_blocks * 64; k+=64)
+//		if (block64Y[k] != 0)
+//  		printf ("%d = %f \n", k, block64Y[k]);
+
+	lastYDC = encodeAll(bitWriter, block64Y, n_blocks, lastYDC, width, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
+
+	
+// encode Cb and Cr
+
+//      lastCbDC = encodeBlock(bitWriter, Cb, scaledChrominance, lastCbDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+	encodeBlock<<<dimGrid,dimBlock>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
+	cudaDeviceSynchronize();
+	cudaFree (dev_Cb);
+	cudaMemcpy( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost );
+	cudaFree (dev_block64Cb);
+
+//	for (int k=0; k<n_blocks * 64; k++)
+//		if (block64Cb[k] != 0)
+//  		printf ("%d = %f \n", k, block64Cb[k]);
+
+	lastCbDC = encodeAll(bitWriter, block64Cb, n_blocks, lastCbDC, width, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+
+//      lastCrDC = encodeBlock(bitWriter, Cr, scaledChrominance, lastCrDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+  encodeBlock<<<dimGrid,dimBlock>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
+	cudaDeviceSynchronize();
+	cudaFree (dev_Cr);
+	cudaMemcpy( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost );
+	cudaFree (dev_block64Cr);
+
+	lastCrDC = encodeAll(bitWriter, block64Cr, n_blocks, lastCrDC, width, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+
+	cudaDeviceReset();
 
   bitWriter.flush(); // now image is completely encoded, write any bits still left in the buffer
 
