@@ -8,6 +8,7 @@
 // //////////////////////////////////////////////////////////
 // use a C++ file stream
 #include <fstream>
+#include <time.h>
 
 // output file
 std::ofstream myFile("example.jpg", std::ios_base::out | std::ios_base::binary);
@@ -21,6 +22,10 @@ void myOutput(unsigned char byte)
 // //////////////////////////////////////////////////////////
 int main()
 {
+	clock_t start, end;
+	
+	start=clock();
+
   // 800x600 image
   const auto width  = 800;
   const auto height = 600;
@@ -53,6 +58,10 @@ int main()
   auto ok = TooJpeg::writeJpeg(myOutput, image, width, height, isRGB, quality, downsample, comment);
 
   delete[] image;
+
+	end=clock();
+	
+	printf("time: %f", double(end-start) / CLOCKS_PER_SEC);
 
   // error => exit code 1
   return ok ? 0 : 1;
