@@ -465,7 +465,7 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 {
 
 	// reset GPU 
-
+	cudaDeviceReset();
 
   // reject invalid pointers
   if (output == nullptr || pixels_ == nullptr)
@@ -843,9 +843,9 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
 // encode Y, Cb, Cr 
 
-//	cudaHostRegister(Y, width*height * sizeof(float), cudaHostRegisterDefault);
-//	cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
-//	cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
+	cudaHostRegister(Y, width*height * sizeof(float), cudaHostRegisterDefault);
+	cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
+	cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
 
 	cudaMemcpyAsync( dev_Y, Y,   width*height * sizeof(float),cudaMemcpyHostToDevice, streamY );
 	cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
@@ -878,6 +878,10 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	cudaFree (dev_Cr);
 	cudaFree (dev_block64Cr);
 
+	cudaHostRegister(Y, width*height * sizeof(float), cudaHostRegisterDefault);
+	cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
+	cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
+
 	cudaStreamSynchronize(streamY);
 	cudaStreamSynchronize(streamCb);
 	cudaStreamSynchronize(streamCr);
@@ -893,6 +897,13 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	start=clock();
 	
 	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
+
+	free(Y);
+	free(Cb);
+	free(Cr);
+	free(block64Y);
+	free(block64Cb);
+	free(block64Cr);
 
 	end=clock();
 	
