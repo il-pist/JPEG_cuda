@@ -3,7 +3,7 @@ example:
 	./example
 
 example_cuda:
-	nvcc example_cuda.cu toojpeg_cuda.cu -o example_cuda -std=c++11
+	nvcc example_cuda.cu toojpeg_cuda.cu -o example_cuda 
 	./example_cuda
 
 nanojpeg_cuda: example_cuda
