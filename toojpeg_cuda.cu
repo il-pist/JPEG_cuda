@@ -5,6 +5,7 @@
 //
 #include <stdio.h>
 #include "toojpeg.h"
+#include <time.h>
 
 // - the "official" specifications: https://www.w3.org/Graphics/JPEG/itu-t81.pdf and https://www.w3.org/Graphics/JPEG/jfif3.pdf
 // - Wikipedia has a short description of the JFIF/JPEG file format: https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format
@@ -794,6 +795,11 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
     }
 
+// timing values
+	clock_t start, end;
+
+	start=clock();
+
 //	float block64Y[n_blocks * 64], block64Cr[n_blocks * 64], block64Cb[n_blocks * 64];
 	float *block64Y, *block64Cr, *block64Cb;
 
@@ -830,62 +836,70 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	cudaMalloc( (void**)&dev_block64Cr, n_blocks * 64 * sizeof(float) );
 	cudaMalloc( (void**)&dev_block64Cb, n_blocks * 64 * sizeof(float) );
 
-	int dimBlock = (n_blocks+31)/32;	//roundup 
-	int dimGrid = 32;
-//	dim3 dimBlock ((n_blocks+31)/32, 1);	//roundup 
-//	dim3 dimGrid (32, 1);
-// encode Y 
+//	int dimBlock = (n_blocks+31)/32;	//roundup 
+//	int dimGrid = 32;
+	dim3 dimBlock ((n_blocks+31)/32, 1);	//roundup 
+	dim3 dimGrid (32, 1);
+
+// encode Y, Cb, Cr 
+
+//	cudaHostRegister(Y, width*height * sizeof(float), cudaHostRegisterDefault);
+//	cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
+//	cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
+
 	cudaMemcpyAsync( dev_Y, Y,   width*height * sizeof(float),cudaMemcpyHostToDevice, streamY );
+	cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
+	cudaMemcpyAsync( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCr );
 
   encodeBlock<<<dimGrid,dimBlock, 0, streamY>>>(dev_Y, dev_scaledLum, width, height, dev_block64Y);
+	encodeBlock<<<dimGrid,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
+  encodeBlock<<<dimGrid,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
 
 
-				if (failed(cudaPeekAtLastError()))
-        {
-            failed(cudaFree(dev_block64Y));
-        }
-        if (failed(cudaDeviceSynchronize()))
-        {
-            failed(cudaFree(dev_block64Y));
-        }
+//				if (failed(cudaPeekAtLastError()))
+//        {
+//            failed(cudaFree(dev_block64Y));
+//        }
+//        if (failed(cudaDeviceSynchronize()))
+//        {
+//            failed(cudaFree(dev_block64Y));
+//        }
 
-//	cudaStreamSynchronize(streamY);
-	//cudaDeviceSynchronize();
+	cudaMemcpyAsync( block64Y, dev_block64Y, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamY );
+
+	cudaMemcpyAsync( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
+
+	cudaMemcpyAsync( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
 
 	cudaFree (dev_Y);
-	cudaMemcpyAsync( block64Y, dev_block64Y, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamY );
 	cudaFree (dev_block64Y);
-
-//	for (int k=0; k<n_blocks * 64; k+=64)
-//		if (block64Y[k] != 0)
-//  		printf ("%d = %f \n", k, block64Y[k]);
-	
-// encode Cb and Cr
-	cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
-
-	encodeBlock<<<dimGrid,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
 	cudaFree (dev_Cb);
-	cudaMemcpyAsync( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
 	cudaFree (dev_block64Cb);
-
-//	for (int k=0; k<n_blocks * 64; k++)
-//		if (block64Cb[k] != 0)
-//  		printf ("%d = %f \n", k, block64Cb[k]);
-
-
-	cudaMemcpyAsync( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCr );
-  encodeBlock<<<dimGrid,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
 	cudaFree (dev_Cr);
-	cudaMemcpyAsync( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
 	cudaFree (dev_block64Cr);
 
 	cudaStreamSynchronize(streamY);
 	cudaStreamSynchronize(streamCb);
 	cudaStreamSynchronize(streamCr);
 
+	cudaStreamDestroy(streamY);
+	cudaStreamDestroy(streamCb);
+	cudaStreamDestroy(streamCr);
+
+	end=clock();
+	
+	printf("\ntime GPU part: %f\n", double(end-start) / CLOCKS_PER_SEC);
+
+	start=clock();
+	
 	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
 
-	cudaDeviceReset();
+	end=clock();
+	
+	printf("\ntime encodeAll: %f\n", double(end-start) / CLOCKS_PER_SEC);
+
+
+//	cudaDeviceReset();
 
   bitWriter.flush(); // now image is completely encoded, write any bits still left in the buffer
 
