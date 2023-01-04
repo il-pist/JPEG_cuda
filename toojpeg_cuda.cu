@@ -91,6 +91,10 @@ const uint8_t AcChrominanceValues        [162] =                                
       0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,0xFA };
 const int16_t CodeWordLimit = 2048; // +/-2^11, maximum value after DCT
 
+
+// STREAM 
+	cudaStream_t streamY, streamCb, streamCr;
+
 // ////////////////////////////////////////
 // structs
 
@@ -684,6 +688,9 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	Y = (float *) malloc( width*height * sizeof(float) );
 	Cb =(float *) malloc( width*height * sizeof(float) );
 	Cr =(float *) malloc( width*height * sizeof(float) );
+//	cudaMallocHost((void**)&Y, width*height * sizeof(float) );
+//	cudaMallocHost((void**)&Cb, width*height * sizeof(float) );
+//	cudaMallocHost((void**)&Cr, width*height * sizeof(float) );
 
   for (auto mcuY = 0; mcuY < height; mcuY += mcuSize) // each step is either 8 or 16 (=mcuSize)
     for (auto mcuX = 0; mcuX < width; mcuX += mcuSize)
@@ -793,16 +800,23 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	block64Y = (float *) malloc( n_blocks * 64 * sizeof(float) );
 	block64Cb =(float *) malloc( n_blocks * 64 * sizeof(float) );
 	block64Cr =(float *) malloc( n_blocks * 64 * sizeof(float) );
+//	cudaMallocHost((void**)&block64Y, n_blocks * 64 * sizeof(float) );
+//	cudaMallocHost((void**)&block64Cb, n_blocks * 64 * sizeof(float) );
+//	cudaMallocHost((void**)&block64Cr, n_blocks * 64 * sizeof(float) );
 
 	float *dev_block64Y, *dev_block64Cr, *dev_block64Cb;
 	float *dev_Y, *dev_Cr, *dev_Cb;
 
+
+// STREAM 
+	cudaStreamCreate(&streamY);
+	cudaStreamCreate(&streamCb);
+	cudaStreamCreate(&streamCr);
+
+
 	cudaMalloc( (void**)&dev_Y,  width*height * sizeof(float) );
 	cudaMalloc( (void**)&dev_Cr, width*height * sizeof(float) );
 	cudaMalloc( (void**)&dev_Cb, width*height * sizeof(float) );
-	cudaMemcpy( dev_Y, Y,   width*height * sizeof(float),cudaMemcpyHostToDevice );
-	cudaMemcpy( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice );
-	cudaMemcpy( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice );
 
   float *dev_scaledLum, *dev_scaledChr;
 
@@ -821,9 +835,9 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 //	dim3 dimBlock ((n_blocks+31)/32, 1);	//roundup 
 //	dim3 dimGrid (32, 1);
 // encode Y 
+	cudaMemcpyAsync( dev_Y, Y,   width*height * sizeof(float),cudaMemcpyHostToDevice, streamY );
 
-//	printf("%d", n_blocks);
-  encodeBlock<<<dimGrid,dimBlock>>>(dev_Y, dev_scaledLum, width, height, dev_block64Y);
+  encodeBlock<<<dimGrid,dimBlock, 0, streamY>>>(dev_Y, dev_scaledLum, width, height, dev_block64Y);
 
 
 				if (failed(cudaPeekAtLastError()))
@@ -835,40 +849,39 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
             failed(cudaFree(dev_block64Y));
         }
 
-	cudaDeviceSynchronize();
+//	cudaStreamSynchronize(streamY);
+	//cudaDeviceSynchronize();
 
 	cudaFree (dev_Y);
-	cudaMemcpy( block64Y, dev_block64Y, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost );
+	cudaMemcpyAsync( block64Y, dev_block64Y, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamY );
 	cudaFree (dev_block64Y);
 
 //	for (int k=0; k<n_blocks * 64; k+=64)
 //		if (block64Y[k] != 0)
 //  		printf ("%d = %f \n", k, block64Y[k]);
-
-//	lastYDC = encodeAll(bitWriter, block64Y, n_blocks, lastYDC, width, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
-
 	
 // encode Cb and Cr
+	cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
 
-//      lastCbDC = encodeBlock(bitWriter, Cb, scaledChrominance, lastCbDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
-	encodeBlock<<<dimGrid,dimBlock>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
-	cudaDeviceSynchronize();
+	encodeBlock<<<dimGrid,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
 	cudaFree (dev_Cb);
-	cudaMemcpy( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost );
+	cudaMemcpyAsync( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
 	cudaFree (dev_block64Cb);
 
 //	for (int k=0; k<n_blocks * 64; k++)
 //		if (block64Cb[k] != 0)
 //  		printf ("%d = %f \n", k, block64Cb[k]);
 
-//	lastCbDC = encodeAll(bitWriter, block64Cb, n_blocks, lastCbDC, width, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
 
-//      lastCrDC = encodeBlock(bitWriter, Cr, scaledChrominance, lastCrDC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
-  encodeBlock<<<dimGrid,dimBlock>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
-	cudaDeviceSynchronize();
+	cudaMemcpyAsync( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCr );
+  encodeBlock<<<dimGrid,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
 	cudaFree (dev_Cr);
-	cudaMemcpy( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost );
+	cudaMemcpyAsync( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
 	cudaFree (dev_block64Cr);
+
+	cudaStreamSynchronize(streamY);
+	cudaStreamSynchronize(streamCb);
+	cudaStreamSynchronize(streamCr);
 
 	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
 
