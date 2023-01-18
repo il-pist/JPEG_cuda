@@ -274,6 +274,7 @@ __global__ void encodeBlock(float* image, float scaled[64], int width, int heigh
 	unsigned int tid = (blockIdx.x*blockDim.x) + threadIdx.x;
 
 	unsigned int n_blocks = width*height/64;
+	
 
 	// "linearize" the 8x8 block, treat it as a flat array of 64 floats
 	// copy an image 8x8 block into a linear vector
@@ -296,7 +297,7 @@ if (tid >= n_blocks){
 //				// if exceed the borders copy last row
 //				if (id2 + i < height)
 //				{
-					block64 [i*8 + j] = image[(i*width + j) + (id1 + id2*width)];
+						block64 [i*8 + j] = image[(i*width + j) + (id1 + id2*width)];
 //				} 
 //				else 
 //				{
@@ -315,7 +316,7 @@ if (tid >= n_blocks){
 //					block64 [i*8 + j] = block64 [(i-1)*8 + (j-1)];
 //				}
 //			}
-
+//
 //							__syncthreads();
 		}
 	}
@@ -330,21 +331,9 @@ if (tid >= n_blocks){
   for (auto offset = 0; offset < 8; offset++)
     DCT(block64 + offset*1, 8);
 
-
- ////////////////// TODO CHECK WHY THE SCALED VALUE CREATES SEGMENTATION ERRORS ///////////////////////
-  // scale
-//  float scaled_int[64];
-
-//  for (int i = 0; i < 8*8; i++){
-//		scaled_int[i] = scaled[i];
-//	}
-
   for (int i = 0; i < 8*8; i++){
-//    block64[i] *= scaled[i];
-		v_block64[tid*64 + i] = (block64[i] * scaled[i]);
-//		if (tid == 1)
-//		printf("elem n %d:		%f\n", tid*64+i, v_block64[tid*64+i]);
-	}
+	v_block64[tid*64 + i] = (block64[i] * scaled[i]);
+  }
 
 	return;
 
@@ -425,15 +414,55 @@ int16_t encodeComponent(BitWriter& writer, float* block64, int block_i, int16_t 
 	
 }
 
-void encodeAll(BitWriter& writer, float* block64Y, float* block64Cb, float* block64Cr, int n_blocks, const BitCode huffmanDCLum[256], const BitCode huffmanACLum[256], const BitCode huffmanDCChr[256], const BitCode huffmanACChr[256], const BitCode* codewords)
+void encodeAll(BitWriter& writer, float* block64Y, float* block64Cb, float* block64Cr, int n_blocks, const BitCode huffmanDCLum[256], const BitCode huffmanACLum[256], const BitCode huffmanDCChr[256], const BitCode huffmanACChr[256], const BitCode* codewords, bool downsample, int width)
 {
 	int DC_lastY=0, DC_lastCb=0, DC_lastCr=0;
-
-	for (auto block_i=0; block_i < n_blocks; block_i++){
-		DC_lastY  = encodeComponent(writer, block64Y, block_i, DC_lastY, huffmanDCLum, huffmanACLum, codewords);
-		DC_lastCb = encodeComponent(writer, block64Cb, block_i, DC_lastCb, huffmanDCChr, huffmanACChr, codewords);
-		DC_lastCr = encodeComponent(writer, block64Cr, block_i, DC_lastCr, huffmanDCChr, huffmanACChr, codewords);
+	int CbCr_row, CbCr_col;
+	int CbCr_w = (width+15)/16; // number of CbCr blocks, used only in case of downsample
+	int CbCr_h = n_blocks / CbCr_w;
+	
+	printf("n_blocks=%d, width=%d\n\n", n_blocks, width);
+	printf("block64Cb[i + 64*187000]:\n");
+	for(int i=0; i<64; i++)
+	{
+		printf("%f ", block64Cb[i + 64*187000]);
 	}
+	printf("\n\n");
+	
+	if (!downsample){
+		for (auto block_i=0; block_i < n_blocks; block_i++){
+			DC_lastY  = encodeComponent(writer, block64Y, block_i, DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+			DC_lastCb = encodeComponent(writer, block64Cb, block_i, DC_lastCb, huffmanDCChr, huffmanACChr, codewords);
+			DC_lastCr = encodeComponent(writer, block64Cr, block_i, DC_lastCr, huffmanDCChr, huffmanACChr, codewords);
+		}
+	} else {
+		// TODO recheck encode Y
+		/*
+		for (auto block_i=0; block_i < n_blocks; block_i++){
+			DC_lastY  = encodeComponent(writer, block64Y, block_i*2 							 , DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+			DC_lastY  = encodeComponent(writer, block64Y, block_i*2 + 1						 , DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+			DC_lastY  = encodeComponent(writer, block64Y, block_i*2 + 		(width/8), DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+			DC_lastY  = encodeComponent(writer, block64Y, block_i*2 + 1 + (width/8), DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+
+			DC_lastCb = encodeComponent(writer, block64Cb, block_i, DC_lastCb, huffmanDCChr, huffmanACChr, codewords);
+			DC_lastCr = encodeComponent(writer, block64Cr, block_i, DC_lastCr, huffmanDCChr, huffmanACChr, codewords);
+		}*/
+		for (CbCr_row=0; CbCr_row < CbCr_h; CbCr_row++) {
+			for(CbCr_col=0; CbCr_col < CbCr_w; CbCr_col++) {
+				auto Y_block_i    =  CbCr_row*4*CbCr_w + CbCr_col*2;
+				auto CbCr_block_i =  CbCr_row*CbCr_w + CbCr_col;
+				
+				DC_lastY  = encodeComponent(writer, block64Y, Y_block_i                 , DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+				DC_lastY  = encodeComponent(writer, block64Y, Y_block_i + 1             , DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+				DC_lastY  = encodeComponent(writer, block64Y, Y_block_i +     (CbCr_w*2), DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+				DC_lastY  = encodeComponent(writer, block64Y, Y_block_i + 1 + (CbCr_w*2), DC_lastY, huffmanDCLum, huffmanACLum, codewords);
+
+				DC_lastCb = encodeComponent(writer, block64Cb, CbCr_block_i, DC_lastCb, huffmanDCChr, huffmanACChr, codewords);
+				DC_lastCr = encodeComponent(writer, block64Cr, CbCr_block_i, DC_lastCr, huffmanDCChr, huffmanACChr, codewords);
+			}
+		}
+	}
+	
 }
 
 // Jon's code includes the pre-generated Huffman codes
@@ -678,8 +707,13 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
  *** this is the part that must be parallelized ***
  **************************************************/
 
-  int n_blocks = height/mcuSize * width/mcuSize;
+	auto CbCr_h = (height+15)/16; 
+	auto CbCr_w = (width+15)/16;
 
+  int n_blocks = height/8 * width/8;	
+	auto CbCr_blocks = CbCr_h * CbCr_w;
+
+	
 //	printf("%d", height);
 //	printf("%d", width);
 //	printf("%d", mcuSize);
@@ -687,8 +721,14 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	float *Y, *Cr, *Cb;  
 
 	Y = (float *) malloc( width*height * sizeof(float) );
-	Cb =(float *) malloc( width*height * sizeof(float) );
-	Cr =(float *) malloc( width*height * sizeof(float) );
+	if (!downsample){
+		Cb =(float *) malloc( width*height * sizeof(float) );
+		Cr =(float *) malloc( width*height * sizeof(float) );
+	} else {
+		Cb =(float *) malloc( CbCr_blocks*64 * sizeof(float) );
+		Cr =(float *) malloc( CbCr_blocks*64 * sizeof(float) );
+	}
+
 //	cudaMallocHost((void**)&Y, width*height * sizeof(float) );
 //	cudaMallocHost((void**)&Cb, width*height * sizeof(float) );
 //	cudaMallocHost((void**)&Cr, width*height * sizeof(float) );
@@ -758,6 +798,8 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
           auto row      = minimum(mcuY + 2*deltaY, maxHeight); // each deltaX/Y step covers a 2x2 area
           auto column   =         mcuX;                        // column is updated inside next loop
           auto pixelPos = (row * int(width) + column) * 3;     // numComponents = 3
+					
+					auto CbCr_idx = ((row/2) * int(CbCr_w*8) + column/2); 
 
           // deltas (in bytes) to next row / column, must not exceed image borders
           auto rowStep    = (row    < maxHeight) ? 3 * int(width) : 0; // always numComponents*width except for bottom    line
@@ -776,13 +818,16 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
             auto b = short(pixels[pixelPos + 2]) + pixels[right + 2] + pixels[down + 2] + pixels[downRight + 2];
 
             // convert to Cb and Cr
-            Cb [pixelPos/3] = rgb2cb(r, g, b) / 4; // I still have to divide r,g,b by 4 to get their average values
-            Cr [pixelPos/3] = rgb2cr(r, g, b) / 4; // it's a bit faster if done AFTER CbCr conversion
+            Cb [CbCr_idx] = rgb2cb(r, g, b) / 4; // I still have to divide r,g,b by 4 to get their average values
+            Cr [CbCr_idx] = rgb2cr(r, g, b) / 4; // it's a bit faster if done AFTER CbCr conversion
 //TODO recheck if pixelPos is correct
 
             // step forward to next 2x2 area
             pixelPos += 2*3; // 2 pixels => 6 bytes (2*numComponents)
             column   += 2;
+						
+						//incr index of Cb and Cr matrixes						
+						CbCr_idx++;
 
             // reached right border ?
             if (column >= maxWidth)
@@ -804,8 +849,13 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	float *block64Y, *block64Cr, *block64Cb;
 
 	block64Y = (float *) malloc( n_blocks * 64 * sizeof(float) );
-	block64Cb =(float *) malloc( n_blocks * 64 * sizeof(float) );
-	block64Cr =(float *) malloc( n_blocks * 64 * sizeof(float) );
+	if (downsample){
+		block64Cb =(float *) malloc( CbCr_blocks * 64 * sizeof(float) );
+		block64Cr =(float *) malloc( CbCr_blocks * 64 * sizeof(float) );
+	} else {
+		block64Cb =(float *) malloc( n_blocks * 64 * sizeof(float) );
+		block64Cr =(float *) malloc( n_blocks * 64 * sizeof(float) );
+	}
 //	cudaMallocHost((void**)&block64Y, n_blocks * 64 * sizeof(float) );
 //	cudaMallocHost((void**)&block64Cb, n_blocks * 64 * sizeof(float) );
 //	cudaMallocHost((void**)&block64Cr, n_blocks * 64 * sizeof(float) );
@@ -813,6 +863,13 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	float *dev_block64Y, *dev_block64Cr, *dev_block64Cb;
 	float *dev_Y, *dev_Cr, *dev_Cb;
 
+	printf("n_blocks=%d, width=%d\n\n", n_blocks, width);
+	printf("Cb[i + 64*187000]:\n");
+	for(int i=0; i<64; i++)
+	{
+		printf("%f ", Cb[i + 64*187000]);
+	}
+	printf("\n\n");
 
 // STREAM 
 	cudaStreamCreate(&streamY);
@@ -821,9 +878,13 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
 
 	cudaMalloc( (void**)&dev_Y,  width*height * sizeof(float) );
-	cudaMalloc( (void**)&dev_Cr, width*height * sizeof(float) );
-	cudaMalloc( (void**)&dev_Cb, width*height * sizeof(float) );
-
+	if (downsample){
+		cudaMalloc( (void**)&dev_Cr, width*height/4 * sizeof(float) );
+		cudaMalloc( (void**)&dev_Cb, width*height/4 * sizeof(float) );
+	} else {
+		cudaMalloc( (void**)&dev_Cr, width*height * sizeof(float) );
+		cudaMalloc( (void**)&dev_Cb, width*height * sizeof(float) );
+	}
   float *dev_scaledLum, *dev_scaledChr;
 
 	cudaMalloc( (void**)&dev_scaledLum, 64 * sizeof(float) );
@@ -838,49 +899,64 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
 //	int dimBlock = (n_blocks+31)/32;	//roundup 
 //	int dimGrid = 32;
-	dim3 dimBlock ((n_blocks+31)/32, 1);	//roundup 
-	dim3 dimGrid (32, 1);
+	dim3 dimBlock (256, 1);	//roundup 
+	dim3 dimGrid ((n_blocks + 255)/256, 1);
+	dim3 dimGridCbCr ((CbCr_blocks + 255)/256, 1);
 
 // encode Y, Cb, Cr 
 
 	cudaHostRegister(Y, width*height * sizeof(float), cudaHostRegisterDefault);
-	cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
-	cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
+	if (downsample){
+		cudaHostRegister(Cb, width*height/4 * sizeof(float), cudaHostRegisterDefault);
+		cudaHostRegister(Cr, width*height/4 * sizeof(float), cudaHostRegisterDefault);
+	}
+	else {
+		cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
+		cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
+	}
 
 	cudaMemcpyAsync( dev_Y, Y,   width*height * sizeof(float),cudaMemcpyHostToDevice, streamY );
-	cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
-	cudaMemcpyAsync( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCr );
+	if (downsample){
+		cudaMemcpyAsync( dev_Cb, Cb, width*height/4 * sizeof(float),cudaMemcpyHostToDevice, streamCb );
+		cudaMemcpyAsync( dev_Cr, Cr, width*height/4 * sizeof(float),cudaMemcpyHostToDevice, streamCr );
+	} else {
+		cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
+		cudaMemcpyAsync( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCr );
+	}
 
-  encodeBlock<<<dimGrid,dimBlock, 0, streamY>>>(dev_Y, dev_scaledLum, width, height, dev_block64Y);
-	encodeBlock<<<dimGrid,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
-  encodeBlock<<<dimGrid,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
+	encodeBlock<<<dimGrid,dimBlock, 0, streamY>>>(dev_Y, dev_scaledLum, width, height, dev_block64Y);
+	if (downsample){
+		encodeBlock<<<dimGridCbCr,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, CbCr_w*8, CbCr_h*8, dev_block64Cb);
+		encodeBlock<<<dimGridCbCr,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, CbCr_w*8, CbCr_h*8, dev_block64Cr);
+	} else {
+		encodeBlock<<<dimGrid,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
+		encodeBlock<<<dimGrid,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
+	}
 
-
-//				if (failed(cudaPeekAtLastError()))
-//        {
-//            failed(cudaFree(dev_block64Y));
-//        }
-//        if (failed(cudaDeviceSynchronize()))
-//        {
-//            failed(cudaFree(dev_block64Y));
-//        }
+	/*	if (failed(cudaPeekAtLastError()))
+        {
+            failed(cudaFree(dev_block64Y));
+        }
+        if (failed(cudaDeviceSynchronize()))
+        {
+            failed(cudaFree(dev_block64Y));
+        }*/
 
 	cudaMemcpyAsync( block64Y, dev_block64Y, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamY );
 
-	cudaMemcpyAsync( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
-
-	cudaMemcpyAsync( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
-
+	if (downsample){
+		cudaMemcpyAsync( block64Cb, dev_block64Cb, CbCr_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
+		cudaMemcpyAsync( block64Cr, dev_block64Cr, CbCr_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
+	} else {
+		cudaMemcpyAsync( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
+		cudaMemcpyAsync( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
+	}
 	cudaFree (dev_Y);
 	cudaFree (dev_block64Y);
 	cudaFree (dev_Cb);
 	cudaFree (dev_block64Cb);
 	cudaFree (dev_Cr);
 	cudaFree (dev_block64Cr);
-
-	cudaHostRegister(Y, width*height * sizeof(float), cudaHostRegisterDefault);
-	cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
-	cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
 
 	cudaStreamSynchronize(streamY);
 	cudaStreamSynchronize(streamCb);
@@ -890,14 +966,23 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	cudaStreamDestroy(streamCb);
 	cudaStreamDestroy(streamCr);
 
+	cudaHostUnregister(Y);
+	cudaHostUnregister(Cb);
+	cudaHostUnregister(Cr);
+	
+
+
 	end=clock();
 	
 	printf("\ntime GPU part: %f\n", double(end-start) / CLOCKS_PER_SEC);
 
 	start=clock();
 	
-	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords);
-
+if (downsample){
+	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, CbCr_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords, downsample, width);
+} else {
+	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords, downsample, width);
+}
 	free(Y);
 	free(Cb);
 	free(Cr);
