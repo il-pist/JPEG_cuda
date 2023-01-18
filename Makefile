@@ -1,9 +1,9 @@
-example:
-	g++ example.cpp toojpeg.cpp -o example -std=c++11
+example: example.cpp toojpeg.cpp
+	g++ $^ -o $@ -std=c++11
 	./example
 
-example_cuda:
-	nvcc example_cuda.cu toojpeg_cuda.cu -o example_cuda 
+example_cuda: example_cuda.cu toojpeg_cuda.cu
+	nvcc $^ -o $@ 
 	./example_cuda
 
 nanojpeg_cuda: example_cuda
