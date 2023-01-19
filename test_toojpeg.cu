@@ -133,6 +133,7 @@ int main()
 	printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
 
 
+
 //TEST 3
 	
 	printf("# test3:\n# sample_1920x1280.ppm origin image with downsample and 90%% of quality image\n");
@@ -174,6 +175,7 @@ int main()
 	printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
 
 
+
 // TEST 6
 
   printf("# test6:\n# 8000x6000 grayscale image WITHOUT donsampling and 90%% quality\n");
@@ -206,7 +208,6 @@ int main()
   end=clock();
 
   printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
-
 
 
 
