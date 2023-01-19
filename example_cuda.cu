@@ -28,8 +28,8 @@ int main()
 	start=clock();
 
   // 800x600 image
-  const auto width  = 800;
-  const auto height = 600;
+  const auto width  = 8000;
+  const auto height = 6000;
   // RGB: one byte each for red, green, blue
   const auto bytesPerPixel = 3;
 
@@ -54,7 +54,7 @@ int main()
   // optional parameters:
   const bool isRGB      = true;  // true = RGB image, else false = grayscale
   const auto quality    = 90;    // compression quality: 0 = worst, 100 = best, 80 to 90 are most often used
-  const bool downsample = false; // false = save as YCbCr444 JPEG (better quality), true = YCbCr420 (smaller file)
+  const bool downsample = true; // false = save as YCbCr444 JPEG (better quality), true = YCbCr420 (smaller file)
   const char* comment = "TooJpeg example image"; // arbitrary JPEG comment
   auto ok = TooJpeg::writeJpeg(myOutput, image, width, height, isRGB, quality, downsample, comment);
 

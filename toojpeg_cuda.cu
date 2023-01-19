@@ -421,14 +421,6 @@ void encodeAll(BitWriter& writer, float* block64Y, float* block64Cb, float* bloc
 	int CbCr_w = (width+15)/16; // number of CbCr blocks, used only in case of downsample
 	int CbCr_h = n_blocks / CbCr_w;
 	
-	printf("n_blocks=%d, width=%d\n\n", n_blocks, width);
-	printf("block64Cb[i + 64*187000]:\n");
-	for(int i=0; i<64; i++)
-	{
-		printf("%f ", block64Cb[i + 64*187000]);
-	}
-	printf("\n\n");
-	
 	if (!downsample){
 		for (auto block_i=0; block_i < n_blocks; block_i++){
 			DC_lastY  = encodeComponent(writer, block64Y, block_i, DC_lastY, huffmanDCLum, huffmanACLum, codewords);
@@ -862,14 +854,6 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
 	float *dev_block64Y, *dev_block64Cr, *dev_block64Cb;
 	float *dev_Y, *dev_Cr, *dev_Cb;
-
-	printf("n_blocks=%d, width=%d\n\n", n_blocks, width);
-	printf("Cb[i + 64*187000]:\n");
-	for(int i=0; i<64; i++)
-	{
-		printf("%f ", Cb[i + 64*187000]);
-	}
-	printf("\n\n");
 
 // STREAM 
 	cudaStreamCreate(&streamY);

@@ -1,3 +1,12 @@
+
+test_toojpeg: test_toojpeg.cu img.cpp toojpeg_cuda.cu
+	nvcc $^ -o $@ 
+	./test_toojpeg
+
+test_toojpeg_serial: test_toojpeg_serial.cpp img.cpp toojpeg.cpp
+	nvcc $^ -o $@ 
+	./test_toojpeg_serial
+
 example: example.cpp toojpeg.cpp
 	g++ $^ -o $@ -std=c++11
 	./example
