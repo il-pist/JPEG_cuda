@@ -34,7 +34,7 @@ clean_cuda:
 	rm -f example_cuda example_cuda.jpg nanojpeg example_cuda.ppm
 
 clean_all_img:
-	rm exampl*.jpg test*.jpg 
+	rm -f exampl*.jpg test*.jpg 
 
 clean_all:
 	make clean_all_img
