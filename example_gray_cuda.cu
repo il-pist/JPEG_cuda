@@ -11,7 +11,7 @@
 #include <time.h>
 
 // output file
-const char* filename = "example_gray.jpg";
+const char* filename = "example_gray_cuda.jpg";
 std::ofstream myFile(filename, std::ios_base::out | std::ios_base::binary);
 
 // write a single byte compressed by TooJpeg

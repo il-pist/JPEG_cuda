@@ -11,9 +11,17 @@ example: example.cpp toojpeg.cpp
 	g++ $^ -o $@ -std=c++11
 	./example
 
+example_gray: example_gray.cpp toojpeg.cpp
+	g++ $^ -o $@ -std=c++11
+	./example_gray
+
 example_cuda: example_cuda.cu toojpeg_cuda.cu
 	nvcc $^ -o $@ 
 	./example_cuda
+
+example_gray_cuda: example_gray_cuda.cu toojpeg_cuda.cu
+	nvcc $^ -o $@ 
+	./example_gray_cuda
 
 nanojpeg_cuda: example_cuda
 	nvcc -O3 -D_NJ_EXAMPLE_PROGRAM -o nanojpeg nanojpeg.cu
@@ -24,3 +32,10 @@ clean:
 
 clean_cuda:	
 	rm -f example_cuda example_cuda.jpg nanojpeg example_cuda.ppm
+
+clean_all_img:
+	rm exampl*.jpg test*.jpg 
+
+clean_all:
+	make clean_all_imgù
+	rm -f example example_gray example_cuda example_gray_cuda nanjpeg_cuda test_toojpeg test_toojpeg_serial

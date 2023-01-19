@@ -56,6 +56,16 @@ void myOutput5(unsigned char byte)
   myFile5 << byte;
 }
 
+// output file
+std::ofstream myFile6("test6_cuda.jpg", std::ios_base::out | std::ios_base::binary);
+
+// write a single byte compressed by tooJpeg
+void myOutput6(unsigned char byte)
+{
+  myFile6 << byte;
+}
+
+
 // //////////////////////////////////////////////////////////
 int main()
 {
@@ -160,6 +170,41 @@ int main()
 	end=clock();
 	
 	printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
+
+
+// TEST 6
+
+	printf("# test6:\n\n");
+	  // 8000x6000 image
+  //width  = 8000;
+  //height = 6000;
+  // Grayscale: one byte per pixel
+  int bytesPerPixelGray = 1;
+
+  // allocate memory
+  auto image6 = new unsigned char[width * height * bytesPerPixelGray];
+
+  // create a nice color transition (replace with your code)
+  for (auto y = 0; y < height; y++)
+    for (auto x = 0; x < width; x++)
+    {
+      // memory location of current pixel
+      auto offset = (y * width + x) * bytesPerPixel;
+
+      // red and green fade from 0 to 255, blue is always 127
+      auto red   = 255 * x / width;
+      auto green = 255 * y / height;
+      image[offset] = (red + green) / 2;;
+    }
+	start=clock();
+	
+  ok = ok | TooJpeg::writeJpeg(myOutput6, image6, width, height, isRGB, quality, false, comment);
+
+  delete[] image6;
+	end=clock();
+	
+	printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
+
 
 
 
