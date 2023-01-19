@@ -37,5 +37,5 @@ clean_all_img:
 	rm exampl*.jpg test*.jpg 
 
 clean_all:
-	make clean_all_imgù
+	make clean_all_img
 	rm -f example example_gray example_cuda example_gray_cuda nanjpeg_cuda test_toojpeg test_toojpeg_serial
