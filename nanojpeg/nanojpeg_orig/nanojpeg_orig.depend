@@ -1,0 +1,9 @@
+# depslib dependency file v1.0
+1674207610 source:/home/work/__POLITO/GPU/proj/nanojpeg/nanojpeg.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<stdlib.h>
+	<string.h>
+	<windows.h>
+
