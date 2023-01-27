@@ -543,54 +543,39 @@ NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int
 	int y = blockIdx.yblockDim.y + threadIdx.y;
 	int iin = stride*y+x;
 	int iout = (stride*y+x) << 1;
-	//out = (unsigned char*) njAllocMem((c->width * c->height) << 1);
-	//lin = c->pixels;
-	//lout = out;
-	//for (y = c->height;  y;  --y) {
 	// TODO to not diverge, blocks should be vertical: first warps should all have x=0
-	if(y < height)
+	if(y < height && x < width)
 	{
-		if(x == 0)
+		if(x == 0) // first three pixels
 		{
 			lout[0] = CF(CF2A * lin[0] + CF2B * lin[1]);                                 // (offset = -2 ?)
 			lout[1] = CF(CF3X * lin[0] + CF3Y * lin[1] + CF3Z * lin[2]);                 // (offset = -1 ?)
 			lout[2] = CF(CF3A * lin[0] + CF3B * lin[1] + CF3C * lin[2]);                 // (offset = -1 ?)
-			//for (x = 0;  x < xmax;  ++x) {
-			lout[3] = CF(CF4A * lin[0] + CF4B * lin[1] + CF4C * lin[2] + CF4D * lin[3]); // offset=0
-
-			lout[4] = CF(CF4D * lin[0] + CF4C * lin[1] + CF4B * lin[2] + CF4A * lin[3]); // offset=0
-			lout[5] = CF(CF4A * lin[1] + CF4B * lin[2] + CF4C * lin[3] + CF4D * lin[4]); // offset=1
-			lout[6] = CF(CF4D * lin[1] + CF4C * lin[2] + CF4B * lin[3] + CF4A * lin[4]); // offset=1
-			lout[7] = CF(CF4A * lin[2] + CF4B * lin[3] + CF4C * lin[4] + CF4D * lin[5]); // offset=2
 		}
-		else if(x < width) // x==4 fino a 
+		else // normal middle pixels
 		{
 			lout[iout+0] = CF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin-0] + CF4A * lin[iin+1]); // offset=iin-2
 			lout[iout+1] = CF(CF4A * lin[iin-1] + CF4B * lin[iin-0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin-1
 			lout[iout+2] = CF(CF4D * lin[iin-1] + CF4C * lin[iin-0] + CF4B * lin[iin+1] + CF4A * lin[iin+2]); // offset=iin+0
-			lout[iout+3] = CF(CF4A * lin[iin-0] + CF4B * lin[iin+1] + CF4C * lin[iin+2] + CF4D * lin[iin+3]); // offset=iin+1
-
-			lout[iout+4] = CF(CF4D * lin[iin  ] + CF4C * lin[iin+1] + CF4B * lin[iin+2] + CF4A * lin[iin+3]); // offset=iin+1
-			lout[iout+5] = CF(CF4A * lin[iin+1] + CF4B * lin[iin+2] + CF4C * lin[iin+3] + CF4D * lin[iin+4]); // offset=iin+2
-			lout[iout+6] = CF(CF4D * lin[iin+1] + CF4C * lin[iin+2] + CF4B * lin[iin+3] + CF4A * lin[iin+4]); // offset=iin+2
-			lout[iout+7] = CF(CF4A * lin[iin+2] + CF4B * lin[iin+3] + CF4C * lin[iin+4] + CF4D * lin[iin+5]); // offset=iin+3
 		}
-		else if(x == stride-4)
-		{
-			lout[iout+0] = CF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin-0] + CF4A * lin[iin+1]); // offset=iin-2
-			lout[iout+1] = CF(CF4A * lin[iin-1] + CF4B * lin[iin-0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin-1
-			lout[iout+2] = CF(CF4D * lin[iin-1] + CF4C * lin[iin-0] + CF4B * lin[iin+1] + CF4A * lin[iin+2]); // offset=iin+0
-			lout[iout+3] = CF(CF4A * lin[iin-0] + CF4B * lin[iin+1] + CF4C * lin[iin+2] + CF4D * lin[iin+3]); // offset=iin+1
 
-			lout[iout+4] = CF(CF4D * lin[iin  ] + CF4C * lin[iin+1] + CF4B * lin[iin+2] + CF4A * lin[iin+3]); // offset=iin+1
+		lout[iout+3] = CF(CF4A * lin[iin-0] + CF4B * lin[iin+1] + CF4C * lin[iin+2] + CF4D * lin[iin+3]); // offset=iin+1
+		lout[iout+4] = CF(CF4D * lin[iin  ] + CF4C * lin[iin+1] + CF4B * lin[iin+2] + CF4A * lin[iin+3]); // offset=iin+1
+
+		if(x == stride-4) // last three pixels
+		{
 			lout[iout+5] = CF(CF3A * lin[iin+3] + CF3B * lin[iin+2] + CF3C * lin[iin+1]); // coeff in reverse order now
 			lout[iout+6] = CF(CF3X * lin[iin+3] + CF3Y * lin[iin+2] + CF3Z * lin[iin+1]);
 			lout[iout+7] = CF(CF2A * lin[iin+3] + CF2B * lin[iin+2]);
 		}
-			//}
-			//lin += c->stride;
-			//lout += c->width << 1;
-		//}
+		else // normal middle pixels
+		{
+			lout[iout+5] = CF(CF4A * lin[iin+1] + CF4B * lin[iin+2] + CF4C * lin[iin+3] + CF4D * lin[iin+4]); // offset=iin+2
+			lout[iout+6] = CF(CF4D * lin[iin+1] + CF4C * lin[iin+2] + CF4B * lin[iin+3] + CF4A * lin[iin+4]); // offset=iin+2
+			lout[iout+7] = CF(CF4A * lin[iin+2] + CF4B * lin[iin+3] + CF4C * lin[iin+4] + CF4D * lin[iin+5]); // offset=iin+3
+		}
+		//lin += c->stride;
+		//lout += c->width << 1;
 	}
 	//c->width <<= 1; // TODO mettere nel codice supervisore CPU
 	//c->stride = c->width;
