@@ -62,7 +62,7 @@ int main()
 
 	end=clock();
 	
-	printf("time: %f", double(end-start) / CLOCKS_PER_SEC);
+	printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
 
   // error => exit code 1
   return ok ? 0 : 1;

@@ -56,6 +56,16 @@ void myOutput5(unsigned char byte)
   myFile5 << byte;
 }
 
+// output file
+std::ofstream myFile6("test6_cuda.jpg", std::ios_base::out | std::ios_base::binary);
+
+// write a single byte compressed by tooJpeg
+void myOutput6(unsigned char byte)
+{
+  myFile6 << byte;
+}
+
+
 // //////////////////////////////////////////////////////////
 int main()
 {
@@ -65,7 +75,8 @@ int main()
 
 // TEST 1
 
-	printf("# test1:\n\n");
+	printf("# test1:\n");
+	printf("# 8000x6000 RGB image with downsample and 90%% quality image\n");
 
   // 800x600 image
   const auto width  = 8000;
@@ -111,19 +122,21 @@ int main()
 
 // TEST 2
 
-	printf("# test2:\n\n");
+	printf("# test2:\n# 8000x6000 RGB image WITHOUT downsample and 90%% quality image\n");
 	start=clock();
 
  	ok = ok | TooJpeg::writeJpeg(myOutput2, image, width, height, isRGB, quality, false, comment);
 
 	end=clock();
+  delete[] image;
 	
 	printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
 
 
+
 //TEST 3
 	
-	printf("# test3:\n\n");
+	printf("# test3:\n# sample_1920x1280.ppm origin image with downsample and 90%% of quality image\n");
 
 	RGBImage* image3=readPPM("sample_1920×1280.ppm");
 	start=clock();
@@ -138,7 +151,7 @@ int main()
 
 // TEST 4
 
-	printf("# test4:\n\n");
+	printf("# test4:\n# sample_5184x3456.ppm origin image with downsample and 90%% of quality image\n");
 	RGBImage* image4=readPPM("sample_5184×3456.ppm");
 	start=clock();
 	
@@ -151,7 +164,7 @@ int main()
 
 // TEST 5
 
-	printf("# test5:\n\n");
+	printf("# test5:\n# sample_5184x3456.ppm origin image WITHOUT downsample and 90%% of quality image\n");
 	RGBImage* image5=readPPM("sample_5184×3456.ppm");
 	start=clock();
 	
@@ -160,6 +173,42 @@ int main()
 	end=clock();
 	
 	printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
+
+
+
+// TEST 6
+
+  printf("# test6:\n# 8000x6000 grayscale image WITHOUT donsampling and 90%% quality\n");
+    // 8000x6000 image
+//  width  = 8000;
+//  height = 6000;
+  // Grayscale: one byte per pixel
+  int bytesPerPixelGray = 1;
+
+  // allocate memory
+  auto image6 = new unsigned char[width * height * bytesPerPixelGray];
+
+  // create a nice color transition (replace with your code)
+  for (auto y = 0; y < height; y++)
+    for (auto x = 0; x < width; x++)
+    {
+      // memory location of current pixel
+      auto offset = (y * width + x) * bytesPerPixelGray;
+
+      // red and green fade from 0 to 255, blue is always 127
+      auto red   = 255 * x / width;
+      auto green = 255 * y / height;
+      image6[offset] = (red + green) / 2;;
+    }
+  start=clock();
+
+  ok = ok | TooJpeg::writeJpeg(myOutput6, image6, width, height, !isRGB, quality, false, comment);
+
+  delete[] image6;
+  end=clock();
+
+  printf("time: %f\n\n", double(end-start) / CLOCKS_PER_SEC);
+
 
 
 

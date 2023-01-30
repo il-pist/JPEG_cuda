@@ -841,12 +841,14 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 	float *block64Y, *block64Cr, *block64Cb;
 
 	block64Y = (float *) malloc( n_blocks * 64 * sizeof(float) );
-	if (downsample){
-		block64Cb =(float *) malloc( CbCr_blocks * 64 * sizeof(float) );
-		block64Cr =(float *) malloc( CbCr_blocks * 64 * sizeof(float) );
-	} else {
-		block64Cb =(float *) malloc( n_blocks * 64 * sizeof(float) );
-		block64Cr =(float *) malloc( n_blocks * 64 * sizeof(float) );
+	if (isRGB){
+		if (downsample){
+			block64Cb =(float *) malloc( CbCr_blocks * 64 * sizeof(float) );
+			block64Cr =(float *) malloc( CbCr_blocks * 64 * sizeof(float) );
+		} else {
+			block64Cb =(float *) malloc( n_blocks * 64 * sizeof(float) );
+			block64Cr =(float *) malloc( n_blocks * 64 * sizeof(float) );
+		}
 	}
 //	cudaMallocHost((void**)&block64Y, n_blocks * 64 * sizeof(float) );
 //	cudaMallocHost((void**)&block64Cb, n_blocks * 64 * sizeof(float) );
@@ -857,30 +859,35 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
 // STREAM 
 	cudaStreamCreate(&streamY);
-	cudaStreamCreate(&streamCb);
-	cudaStreamCreate(&streamCr);
-
+  if (isRGB){
+		cudaStreamCreate(&streamCb);
+		cudaStreamCreate(&streamCr);
+	}
 
 	cudaMalloc( (void**)&dev_Y,  width*height * sizeof(float) );
-	if (downsample){
-		cudaMalloc( (void**)&dev_Cr, width*height/4 * sizeof(float) );
-		cudaMalloc( (void**)&dev_Cb, width*height/4 * sizeof(float) );
-	} else {
-		cudaMalloc( (void**)&dev_Cr, width*height * sizeof(float) );
-		cudaMalloc( (void**)&dev_Cb, width*height * sizeof(float) );
+  if (isRGB){
+		if (downsample){
+			cudaMalloc( (void**)&dev_Cr, width*height/4 * sizeof(float) );
+			cudaMalloc( (void**)&dev_Cb, width*height/4 * sizeof(float) );
+		} else {
+			cudaMalloc( (void**)&dev_Cr, width*height * sizeof(float) );
+			cudaMalloc( (void**)&dev_Cb, width*height * sizeof(float) );
+		}
 	}
   float *dev_scaledLum, *dev_scaledChr;
 
 	cudaMalloc( (void**)&dev_scaledLum, 64 * sizeof(float) );
-	cudaMalloc( (void**)&dev_scaledChr, 64 * sizeof(float) );
 	cudaMemcpy( dev_scaledLum, scaledLuminance, 	64 * sizeof(float),cudaMemcpyHostToDevice );
-	cudaMemcpy( dev_scaledChr, scaledChrominance, 64 * sizeof(float),cudaMemcpyHostToDevice );
-
+  if (isRGB){
+		cudaMalloc( (void**)&dev_scaledChr, 64 * sizeof(float) );
+		cudaMemcpy( dev_scaledChr, scaledChrominance, 64 * sizeof(float),cudaMemcpyHostToDevice );
+	}
 	if (cudaMalloc( (void**)&dev_block64Y,  n_blocks * 64 * sizeof(float) ) != cudaSuccess)
 		printf("mallocError\n");
-	cudaMalloc( (void**)&dev_block64Cr, n_blocks * 64 * sizeof(float) );
-	cudaMalloc( (void**)&dev_block64Cb, n_blocks * 64 * sizeof(float) );
-
+  if (isRGB){
+		cudaMalloc( (void**)&dev_block64Cr, n_blocks * 64 * sizeof(float) );
+		cudaMalloc( (void**)&dev_block64Cb, n_blocks * 64 * sizeof(float) );
+	}
 //	int dimBlock = (n_blocks+31)/32;	//roundup 
 //	int dimGrid = 32;
 	dim3 dimBlock (256, 1);	//roundup 
@@ -890,33 +897,38 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 // encode Y, Cb, Cr 
 
 	cudaHostRegister(Y, width*height * sizeof(float), cudaHostRegisterDefault);
-	if (downsample){
-		cudaHostRegister(Cb, width*height/4 * sizeof(float), cudaHostRegisterDefault);
-		cudaHostRegister(Cr, width*height/4 * sizeof(float), cudaHostRegisterDefault);
-	}
-	else {
-		cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
-		cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
+  if (isRGB){
+		if (downsample){
+			cudaHostRegister(Cb, width*height/4 * sizeof(float), cudaHostRegisterDefault);
+			cudaHostRegister(Cr, width*height/4 * sizeof(float), cudaHostRegisterDefault);
+		}
+		else {
+			cudaHostRegister(Cb, width*height * sizeof(float), cudaHostRegisterDefault);
+			cudaHostRegister(Cr, width*height * sizeof(float), cudaHostRegisterDefault);
+		}
 	}
 
 	cudaMemcpyAsync( dev_Y, Y,   width*height * sizeof(float),cudaMemcpyHostToDevice, streamY );
-	if (downsample){
-		cudaMemcpyAsync( dev_Cb, Cb, width*height/4 * sizeof(float),cudaMemcpyHostToDevice, streamCb );
-		cudaMemcpyAsync( dev_Cr, Cr, width*height/4 * sizeof(float),cudaMemcpyHostToDevice, streamCr );
-	} else {
-		cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
-		cudaMemcpyAsync( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCr );
+  if (isRGB){
+		if (downsample){
+			cudaMemcpyAsync( dev_Cb, Cb, width*height/4 * sizeof(float),cudaMemcpyHostToDevice, streamCb );
+			cudaMemcpyAsync( dev_Cr, Cr, width*height/4 * sizeof(float),cudaMemcpyHostToDevice, streamCr );
+		} else {
+			cudaMemcpyAsync( dev_Cb, Cb, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCb );
+			cudaMemcpyAsync( dev_Cr, Cr, width*height * sizeof(float),cudaMemcpyHostToDevice, streamCr );
+		}
 	}
 
 	encodeBlock<<<dimGrid,dimBlock, 0, streamY>>>(dev_Y, dev_scaledLum, width, height, dev_block64Y);
-	if (downsample){
-		encodeBlock<<<dimGridCbCr,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, CbCr_w*8, CbCr_h*8, dev_block64Cb);
-		encodeBlock<<<dimGridCbCr,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, CbCr_w*8, CbCr_h*8, dev_block64Cr);
-	} else {
-		encodeBlock<<<dimGrid,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
-		encodeBlock<<<dimGrid,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
+  if (isRGB){
+		if (downsample){
+			encodeBlock<<<dimGridCbCr,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, CbCr_w*8, CbCr_h*8, dev_block64Cb);
+			encodeBlock<<<dimGridCbCr,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, CbCr_w*8, CbCr_h*8, dev_block64Cr);
+		} else {
+			encodeBlock<<<dimGrid,dimBlock, 0 ,streamCb>>>(dev_Cb, dev_scaledChr, width, height, dev_block64Cb);
+			encodeBlock<<<dimGrid,dimBlock, 0, streamCr>>>(dev_Cr, dev_scaledChr, width, height, dev_block64Cr);
+		}
 	}
-
 	/*	if (failed(cudaPeekAtLastError()))
         {
             failed(cudaFree(dev_block64Y));
@@ -928,32 +940,37 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
 	cudaMemcpyAsync( block64Y, dev_block64Y, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamY );
 
-	if (downsample){
-		cudaMemcpyAsync( block64Cb, dev_block64Cb, CbCr_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
-		cudaMemcpyAsync( block64Cr, dev_block64Cr, CbCr_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
-	} else {
-		cudaMemcpyAsync( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
-		cudaMemcpyAsync( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
+  if (isRGB){
+		if (downsample){
+			cudaMemcpyAsync( block64Cb, dev_block64Cb, CbCr_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
+			cudaMemcpyAsync( block64Cr, dev_block64Cr, CbCr_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
+		} else {
+			cudaMemcpyAsync( block64Cb, dev_block64Cb, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCb );
+			cudaMemcpyAsync( block64Cr, dev_block64Cr, n_blocks * 64 * sizeof(float),cudaMemcpyDeviceToHost, streamCr );
+		}
 	}
 	cudaFree (dev_Y);
 	cudaFree (dev_block64Y);
-	cudaFree (dev_Cb);
-	cudaFree (dev_block64Cb);
-	cudaFree (dev_Cr);
-	cudaFree (dev_block64Cr);
-
-	cudaStreamSynchronize(streamY);
-	cudaStreamSynchronize(streamCb);
-	cudaStreamSynchronize(streamCr);
+  if (isRGB){
+		cudaFree (dev_Cb);
+		cudaFree (dev_block64Cb);
+		cudaFree (dev_Cr);
+		cudaFree (dev_block64Cr);
+	}
+	cudaDeviceSynchronize();
+//	cudaStreamSynchronize(streamCb);
+//	cudaStreamSynchronize(streamCr);
 
 	cudaStreamDestroy(streamY);
-	cudaStreamDestroy(streamCb);
-	cudaStreamDestroy(streamCr);
-
+  if (isRGB){
+		cudaStreamDestroy(streamCb);
+		cudaStreamDestroy(streamCr);
+	}
 	cudaHostUnregister(Y);
-	cudaHostUnregister(Cb);
-	cudaHostUnregister(Cr);
-	
+  if (isRGB){
+		cudaHostUnregister(Cb);
+		cudaHostUnregister(Cr);
+	}
 
 
 	end=clock();
@@ -962,17 +979,27 @@ bool writeJpeg(WRITE_ONE_BYTE output, const void* pixels_, unsigned short width,
 
 	start=clock();
 	
-if (downsample){
-	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, CbCr_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords, downsample, width);
+if (isRGB){
+	if (downsample){
+		encodeAll(bitWriter, block64Y, block64Cb, block64Cr, CbCr_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords, downsample, width);
+	} else {
+		encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords, downsample, width);
+	}
 } else {
-	encodeAll(bitWriter, block64Y, block64Cb, block64Cr, n_blocks, huffmanLuminanceDC, huffmanLuminanceAC, huffmanChrominanceDC, huffmanChrominanceAC, codewords, downsample, width);
+	int DC_lastY=0;
+	for (auto block_i=0; block_i < n_blocks; block_i++){
+		DC_lastY  = encodeComponent(bitWriter, block64Y, block_i, DC_lastY, huffmanLuminanceDC, huffmanLuminanceAC, codewords);
+	}
 }
+
 	free(Y);
-	free(Cb);
-	free(Cr);
 	free(block64Y);
-	free(block64Cb);
-	free(block64Cr);
+  if (isRGB){
+		free(Cb);
+		free(Cr);
+		free(block64Cb);
+		free(block64Cr);
+	}
 
 	end=clock();
 	
