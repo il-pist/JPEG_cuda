@@ -15,6 +15,7 @@
 
 #if NJ_USE_LIBC
 	#include <stdlib.h>
+	#include <stdio.h>  // added to allow compilation
 	#include <string.h>
 	#define njAllocMem malloc
 	#define njFreeMem  free
@@ -538,49 +539,47 @@ NJ_INLINE void njUpsampleH(nj_component_t* c) {
 /// @param[in]  lin component->pixels
 /// @param[out] lout component->pixels double the width
 NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int stride) {
-	const int xmax = c->width - 3;
-	int x = blockIdx.xblockDim.x + threadIdx.x;
-	int y = blockIdx.yblockDim.y + threadIdx.y;
+	//const int xmax = c->width - 3;
+	int x = (blockIdx.x*blockDim.x + threadIdx.x)*4; // original pixel x
+	int y = blockIdx.y*blockDim.y + threadIdx.y; // original pixel y
 	int iin = stride*y+x;
 	int iout = (stride*y+x) << 1;
+	int i;
 	// TODO to not diverge, blocks should be vertical: first warps should all have x=0
-	if(y < height && x < width)
+	if(y < height)
 	{
-		if(x == 0) // first three pixels
+		for(i=0; i<4 && x+i<width; i++, iin+=1, iout+=2) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
 		{
-			lout[0] = CF(CF2A * lin[0] + CF2B * lin[1]);                                 // (offset = -2 ?)
-			lout[1] = CF(CF3X * lin[0] + CF3Y * lin[1] + CF3Z * lin[2]);                 // (offset = -1 ?)
-			lout[2] = CF(CF3A * lin[0] + CF3B * lin[1] + CF3C * lin[2]);                 // (offset = -1 ?)
+			if(x+i == 0) // first pixel (*000)
+			{
+				lout[iout+0] = CF(CF2A * lin[iin+0] + CF2B * lin[iin+1]);                         // (offset = -2 ?)
+				lout[iout+1] = CF(CF3X * lin[iin+0] + CF3Y * lin[iin+1] + CF3Z * lin[iin+2]);     // (offset = -1 ?)
+			}
+			else if(x+i == 1) // second pixel (0*00)
+			{
+				lout[iout+0] = CF(CF3A * lin[iin-1] + CF3B * lin[iin+0] + CF3C * lin[iin+1]);     // (offset = -1 ?)
+				if(x+i == width-2) // second pixel is also second to last (0*0) (image ends right after it started: 3 column wide)
+					lout[iout+1] = CF(CF3A * lin[iin+1] + CF3B * lin[iin+0] + CF3C * lin[iin-1]); // coeff in reverse order now
+				else // normal second pixel (0*00)
+					lout[iout+1] = CF(CF4A * lin[iin-2] + CF4B * lin[iin-1] + CF4C * lin[iin+0] + CF4D * lin[iin+1]); // offset=iin+1
+			}
+			else if(x+i == width-2) // second to last pixel (00*0) (3-wide image already handled in if(x+i==1))
+			{
+				lout[iout+3] = CF(CF4A * lin[iin-0] + CF4B * lin[iin+1] + CF4C * lin[iin+2] + CF4D * lin[iin+3]); // offset=iin+1
+				lout[iout+5] = CF(CF3A * lin[iin+3] + CF3B * lin[iin+2] + CF3C * lin[iin+1]); // coeff in reverse order now
+			}
+			else if(x+i == width-1) // last pixel (000*)
+			{
+				lout[iout+0] = CF(CF3X * lin[iin-0] + CF3Y * lin[iin-1] + CF3Z * lin[iin-2]);
+				lout[iout+1] = CF(CF2A * lin[iin-0] + CF2B * lin[iin-1]);
+			}
+			else // normal middle pixels (...00*00...)
+			{
+				lout[iout+0] = CF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin+0] + CF4A * lin[iin+1]); // offset=iin+1
+				lout[iout+1] = CF(CF4A * lin[iin-1] + CF4B * lin[iin+0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin+1
+			}
 		}
-		else // normal middle pixels
-		{
-			lout[iout+0] = CF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin-0] + CF4A * lin[iin+1]); // offset=iin-2
-			lout[iout+1] = CF(CF4A * lin[iin-1] + CF4B * lin[iin-0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin-1
-			lout[iout+2] = CF(CF4D * lin[iin-1] + CF4C * lin[iin-0] + CF4B * lin[iin+1] + CF4A * lin[iin+2]); // offset=iin+0
-		}
-
-		lout[iout+3] = CF(CF4A * lin[iin-0] + CF4B * lin[iin+1] + CF4C * lin[iin+2] + CF4D * lin[iin+3]); // offset=iin+1
-		lout[iout+4] = CF(CF4D * lin[iin  ] + CF4C * lin[iin+1] + CF4B * lin[iin+2] + CF4A * lin[iin+3]); // offset=iin+1
-
-		if(x == stride-4) // last three pixels
-		{
-			lout[iout+5] = CF(CF3A * lin[iin+3] + CF3B * lin[iin+2] + CF3C * lin[iin+1]); // coeff in reverse order now
-			lout[iout+6] = CF(CF3X * lin[iin+3] + CF3Y * lin[iin+2] + CF3Z * lin[iin+1]);
-			lout[iout+7] = CF(CF2A * lin[iin+3] + CF2B * lin[iin+2]);
-		}
-		else // normal middle pixels
-		{
-			lout[iout+5] = CF(CF4A * lin[iin+1] + CF4B * lin[iin+2] + CF4C * lin[iin+3] + CF4D * lin[iin+4]); // offset=iin+2
-			lout[iout+6] = CF(CF4D * lin[iin+1] + CF4C * lin[iin+2] + CF4B * lin[iin+3] + CF4A * lin[iin+4]); // offset=iin+2
-			lout[iout+7] = CF(CF4A * lin[iin+2] + CF4B * lin[iin+3] + CF4C * lin[iin+4] + CF4D * lin[iin+5]); // offset=iin+3
-		}
-		//lin += c->stride;
-		//lout += c->width << 1;
 	}
-	//c->width <<= 1; // TODO mettere nel codice supervisore CPU
-	//c->stride = c->width;
-	//njFreeMem((void*)c->pixels);
-	//c->pixels = out;
 }
 
 NJ_INLINE void njUpsampleV(nj_component_t* c) {
