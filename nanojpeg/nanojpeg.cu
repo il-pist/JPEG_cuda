@@ -538,7 +538,7 @@ NJ_INLINE void njUpsampleH(nj_component_t* c) {
 /// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
 /// @param[in]  lin component->pixels
 /// @param[out] lout component->pixels double the width
-NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int stride) {
+__device__ void njCudaUpsampleH(char* lin, char* lout, int width, int height, int stride) {
 	//const int xmax = c->width - 3;
 	int x = (blockIdx.x*blockDim.x + threadIdx.x)*4; // original pixel x
 	int y = blockIdx.y*blockDim.y + threadIdx.y; // original pixel y
@@ -593,7 +593,7 @@ NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int
 /// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
 /// @param[in]  cin component->pixels
 /// @param[out] cout component->pixels double the width
-NJ_INLINE void njCudaUpsampleV(char* cin, char* cout, int width, int height, int stride) {
+__device__ void njCudaUpsampleV(char* cin, char* cout, int width, int height, int stride) {
 	const int w = width, s1 = stride, s2 = s1 + s1; // stride, double stride (oss after UpsampleH() stride=width)
 	int x = blockIdx.x*blockDim.x + threadIdx.x;       // original pixel x
 	int y = (blockIdx.y*blockDim.y + threadIdx.y)*4;   // original pixel y (one thread every 4 pixels in vertical)
@@ -693,25 +693,71 @@ NJ_INLINE void njUpsample(nj_component_t* c) {
 
 #endif
 
-NJ_INLINE void njConvert(void) {
+#define PX_PER_THREAD 16
+
+/// Expects to be called once for every PX_PER_THREAD horizontal pixels
+__device__ nj_ycbcr_to_rgb(
+	char* py, char* pcb, char* pcr,
+	int ystride, int cbstride, int crstride,
+	char* rgbout, int width, int height
+)
+{
+	int i;
+	int vy, vcb, vcr;
+	int x = (blockIdx.x*blockDim.x + threadIdx.x)*PX_PER_THREAD;  // original pixel x (one thread every PX_PER_THREAD pixels in horizontal)
+	int y = blockIdx.y*blockDim.y + threadIdx.y;                  // original pixel y
+
+	if(y < height)
+	{
+		// find starting pointers
+		py   += ystride  * y  + x;
+		pcb  += cbstride * cb + x;
+		pcr  += crstride * cr + x;
+
+		prgb += (width * y + x) *3;
+
+		// convert (up to) PX_PER_THREAD pixels in this thread
+		for(i=0; i<PX_PER_THREAD && x < width; i++, py++, pcb++, pcr++, prgb+=3)
+		{
+			vy = py << 8;
+			vcb = pcb - 128;
+			vcr = pcr - 128;
+			prgb[0] = njClip((vy             + 359 * vcr + 128) >> 8);
+			prgb[1] = njClip((vy -  88 * vcb - 183 * vcr + 128) >> 8);
+			prgb[2] = njClip((vy + 454 * vcb             + 128) >> 8);
+		}
+	}
+}
+
+NJ_INLINE void njCudaConvert(void) {
 	int i;
 	nj_component_t* c;
 	for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) {
-		#if NJ_CHROMA_FILTER
+		//#if NJ_CHROMA_FILTER
 			while ((c->width < nj.width) || (c->height < nj.height)) {
-				if (c->width < nj.width) njUpsampleH(c);
+				if (c->width < nj.width)
+				{
+					njCudaUpsampleH<<<TODO, >>>(c);
+					c->width *= 2;
+					c->stride = width;
+				}
 				njCheckError();
-				if (c->height < nj.height) njUpsampleV(c);
+				if (c->height < nj.height)
+				{
+					njCudaUpsampleV<<<TODO, >>>(c);
+					c->height *= 2;
+					c->stride = c->width;
+				}
 				njCheckError();
 			}
-		#else
-			if ((c->width < nj.width) || (c->height < nj.height))
-				njUpsample(c);
-		#endif
+		//#else
+		//	if ((c->width < nj.width) || (c->height < nj.height))
+		//		njUpsample(c);
+		//#endif
 		if ((c->width < nj.width) || (c->height < nj.height)) njThrow(NJ_INTERNAL_ERR);
 	}
 	if (nj.ncomp == 3) {
-		// convert to RGB
+		// convert to RGB (8-stride may be already removed either horizontally or vertically in Upsample)
 		int x, yy;
 		unsigned char *prgb = nj.rgb;
 		const unsigned char *py  = nj.comp[0].pixels;
@@ -731,7 +777,58 @@ NJ_INLINE void njConvert(void) {
 			pcr += nj.comp[2].stride;
 		}
 	} else if (nj.comp[0].width != nj.comp[0].stride) {
-		// grayscale -> only remove stride
+		// grayscale -> only remove 8-stride
+		unsigned char *pin = &nj.comp[0].pixels[nj.comp[0].stride];
+		unsigned char *pout = &nj.comp[0].pixels[nj.comp[0].width];
+		int y;
+		for (y = nj.comp[0].height - 1;  y;  --y) {
+			njCopyMem(pout, pin, nj.comp[0].width);
+			pin += nj.comp[0].stride;
+			pout += nj.comp[0].width;
+		}
+		nj.comp[0].stride = nj.comp[0].width;
+	}
+}
+
+NJ_INLINE void njConvert(void) {
+	int i;
+	nj_component_t* c;
+	for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) {
+		#if NJ_CHROMA_FILTER
+			while ((c->width < nj.width) || (c->height < nj.height)) {
+				if (c->width < nj.width) njUpsampleH(c);
+				njCheckError();
+				if (c->height < nj.height) njUpsampleV(c);
+				njCheckError();
+			}
+		#else
+			if ((c->width < nj.width) || (c->height < nj.height))
+				njUpsample(c);
+		#endif
+		if ((c->width < nj.width) || (c->height < nj.height)) njThrow(NJ_INTERNAL_ERR);
+	}
+	if (nj.ncomp == 3) {
+		// convert to RGB (8-stride may be already removed either horizontally or vertically in Upsample)
+		int x, yy;
+		unsigned char *prgb = nj.rgb;
+		const unsigned char *py  = nj.comp[0].pixels;
+		const unsigned char *pcb = nj.comp[1].pixels;
+		const unsigned char *pcr = nj.comp[2].pixels;
+		for (yy = nj.height;  yy;  --yy) {
+			for (x = 0;  x < nj.width;  ++x) {
+				register int y = py[x] << 8;
+				register int cb = pcb[x] - 128;
+				register int cr = pcr[x] - 128;
+				*prgb++ = njClip((y            + 359 * cr + 128) >> 8);
+				*prgb++ = njClip((y -  88 * cb - 183 * cr + 128) >> 8);
+				*prgb++ = njClip((y + 454 * cb            + 128) >> 8);
+			}
+			py += nj.comp[0].stride;
+			pcb += nj.comp[1].stride;
+			pcr += nj.comp[2].stride;
+		}
+	} else if (nj.comp[0].width != nj.comp[0].stride) {
+		// grayscale -> only remove 8-stride
 		unsigned char *pin = &nj.comp[0].pixels[nj.comp[0].stride];
 		unsigned char *pout = &nj.comp[0].pixels[nj.comp[0].width];
 		int y;
