@@ -535,7 +535,7 @@ NJ_INLINE void njUpsampleH(nj_component_t* c) {
 ///   fall all in one block. Or at worst 2x16?
 /// @param[in]  width width of input component, not multiple of 8 / possibly halved
 /// @param[in]  height height of input component, not multiple of 8 / possibly halved
-/// @param[in]  stride real width of input component pixels, multiple of 8
+/// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
 /// @param[in]  lin component->pixels
 /// @param[out] lout component->pixels double the width
 NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int stride) {
@@ -545,7 +545,6 @@ NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int
 	int iin = stride*y+x;
 	int iout = (stride*y+x) << 1;
 	int i;
-	// TODO to not diverge, blocks should be vertical: first warps should all have x=0
 	if(y < height)
 	{
 		for(i=0; i<4 && x+i<width; i++, iin+=1, iout+=2) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
@@ -561,12 +560,12 @@ NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int
 				if(x+i == width-2) // second pixel is also second to last (0*0) (image ends right after it started: 3 column wide)
 					lout[iout+1] = CF(CF3A * lin[iin+1] + CF3B * lin[iin+0] + CF3C * lin[iin-1]); // coeff in reverse order now
 				else // normal second pixel (0*00)
-					lout[iout+1] = CF(CF4A * lin[iin-2] + CF4B * lin[iin-1] + CF4C * lin[iin+0] + CF4D * lin[iin+1]); // offset=iin+1
+					lout[iout+1] = CF(CF4A * lin[iin-1] + CF4B * lin[iin+0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin+1
 			}
 			else if(x+i == width-2) // second to last pixel (00*0) (3-wide image already handled in if(x+i==1))
 			{
-				lout[iout+3] = CF(CF4A * lin[iin-0] + CF4B * lin[iin+1] + CF4C * lin[iin+2] + CF4D * lin[iin+3]); // offset=iin+1
-				lout[iout+5] = CF(CF3A * lin[iin+3] + CF3B * lin[iin+2] + CF3C * lin[iin+1]); // coeff in reverse order now
+				lout[iout+0] = CF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin+0] + CF4A * lin[iin+1]); // offset=iin+1
+				lout[iout+1] = CF(CF3A * lin[iin+1] + CF3B * lin[iin+0] + CF3C * lin[iin-1]); // coeff in reverse order now
 			}
 			else if(x+i == width-1) // last pixel (000*)
 			{
@@ -580,6 +579,65 @@ NJ_INLINE void njCudaUpsampleH(char* lin, char* lout, int width, int height, int
 			}
 		}
 	}
+	// TODO
+	//width *= 2;
+	//stride = width;
+	// lin and lout should be different arrays of memory with the correct dimensions
+}
+
+/// Made to be called one thread every 4 vertical input pixels;
+///   each thread produces 8 vertical pixels.
+/// Note: cache danger!
+/// @param[in]  width width of input component, not multiple of 8 / possibly halved
+/// @param[in]  height height of input component, not multiple of 8 / possibly halved
+/// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
+/// @param[in]  cin component->pixels
+/// @param[out] cout component->pixels double the width
+NJ_INLINE void njCudaUpsampleV(char* cin, char* cout, int width, int height, int stride) {
+	const int w = width, s1 = stride, s2 = s1 + s1; // stride, double stride (oss after UpsampleH() stride=width)
+	int x = blockIdx.x*blockDim.x + threadIdx.x;       // original pixel x
+	int y = (blockIdx.y*blockDim.y + threadIdx.y)*4;   // original pixel y (one thread every 4 pixels in vertical)
+	int iin = stride*y+x;
+	int iout = (stride*y+x) << 1;
+	int i;
+	//out = (unsigned char*) njAllocMem((c->width * c->height) << 1);
+	if(x < width)
+	{
+		for(i=0; i<4 && y+i<width; i++, iin+=s1, iout+=2*width) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
+		{
+			if(y+i == 0) // first pixel (*000)
+			{
+				cout[iout  ] = CF(CF2A * cin[iin] + CF2B * cin[iin+s1]);
+				cout[iout+w] = CF(CF3X * cin[iin] + CF3Y * cin[iin+s1] + CF3Z * cin[iin+s2]);
+			}
+			else if(y+i == 1) // second pixel (0*00)
+			{
+				cout[iout  ] = CF(CF3A * cin[iin-s1] + CF3B * cin[iin+0] + CF3C * cin[iin+s1]);     // (offset = -1 ?)
+				if(x+i == height-2) // second pixel is also second to last (0*0) (image ends right after it started: 3 column wide)
+					cout[iout+w] = CF(CF3A * cin[iin+s1] + CF3B * cin[iin   ] + CF3C * cin[iin-s1]);
+				else // normal second pixel (0*00)
+					cout[iout+w] = CF(CF4A * cin[iin-s1] + CF4B * cin[iin +0] + CF4C * cin[iin+s1] + CF4D * cin[iin+s2]);
+			}
+			else if(y+i == height-2) // second to last pixel (00*0) (3-wide image already handled in if(x+i==1))
+			{
+				cout[iout  ] = CF(CF4D * cin[iin-s2] + CF4C * cin[iin-s1] + CF4B * cin[iin +0] + CF4A * cin[iin+s1]);
+				cout[iout+w] = CF(CF3A * cin[iin+s1] + CF3B * cin[iin +0] + CF3C * cin[iin-s1]);
+			}
+			else if(y+i == height-1) // last pixel (000*)
+			{
+				cout[iout  ] = CF(CF3X * cin[iin-0] + CF3Y * cin[iin-s1] + CF3Z * cin[iin-s2]);
+				cout[iout+w] = CF(CF2A * cin[iin-0] + CF2B * cin[iin-s1]);
+			}
+			else // normal middle pixels (...00*00...)
+			{
+				cout[iout  ] = CF(CF4D * cin[iin-s2] + CF4C * cin[iin-s1] + CF4B * cin[iin +0] + CF4A * cin[iin+s1]);
+				cout[iout+w] = CF(CF4A * cin[iin-s1] + CF4B * cin[iin +0] + CF4C * cin[iin+s1] + CF4D * cin[iin+s2]);
+			}
+		}
+	}
+	//c->height <<= 1;
+	//c->stride = c->width;
+	//c->pixels = out;
 }
 
 NJ_INLINE void njUpsampleV(nj_component_t* c) {
