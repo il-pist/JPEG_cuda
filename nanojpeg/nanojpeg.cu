@@ -524,7 +524,7 @@ __global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout, int wid
 	int iin = stride*y+x;
 	int iout = (stride*y+x) << 1;
 	int i;
-	//printf("UpsampleH x=%d y=%d, w=%d, h=%d, str=%d, in %08x out %08x\n", x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
+	printf("UpsampleH x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
 	if(y < height)
 	{
 		for(i=0; i<4 && x+i<width; i++, iin+=1, iout+=2) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
@@ -581,7 +581,7 @@ __global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout, int wid
 	int iout = (stride*y+x) << 1;
 	int i;
 	//out = (unsigned char*) njAllocMem((c->width * c->height) << 1);
-	//printf("UpsampleV x=%d y=%d, w=%d, h=%d, str=%d, in %08x out %08x\n", x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
+	printf("UpsampleV x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
 	if(x < width)
 	{
 		for(i=0; i<4 && y+i<width; i++, iin+=s1, iout+=2*width) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
@@ -759,7 +759,7 @@ NJ_INLINE void njCudaConvert(void) {
 		if(failed(cudaMemcpy( c->cupixels, c->pixels, c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
 			printf("memcpy iniziale componente fallita\n");
 		
-		printf("componente %d: pix %08x cupix %08x\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
+		printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
 
 		//#if NJ_CHROMA_FILTER
 			while ((c->width < nj.width) || (c->height < nj.height)) {
@@ -772,7 +772,7 @@ NJ_INLINE void njCudaConvert(void) {
 					dim3 dimGrid (((nj.width+3)/4 + 7)/8, (nj.height+31)/32); // grid size
 
 					printf("UpsampleH dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
-					printf("componente %d: pix %08x cupix %08x, newvec %08x 2a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
+					printf("componente %d: pix %08lx cupix %08lx, newvec %08lx 2a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
 					
 					njCudaUpsampleH<<<dimGrid, dimBlock>>>(c->cupixels, newvec, c->width, c->height, c->stride); // TODO call it better
 					
@@ -794,7 +794,7 @@ NJ_INLINE void njCudaConvert(void) {
 					dim3 dimGrid ((nj.width + 31)/32, ((nj.height+3)/4 + 7)/8); // grid size
 
 					printf("UpsampleV dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
-					printf("componente %d: pix %08x cupix %08x, newvec %08x 3a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
+					printf("componente %d: pix %08lx cupix %08lx, newvec %08lx 3a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
 					njCudaUpsampleV<<<dimGrid, dimBlock>>>(c->cupixels, newvec, c->width, c->height, c->stride); // TODO call it better
 					if (failed(cudaPeekAtLastError()))
 						printf("error UpsampleV component %d failed\n", i);
@@ -929,6 +929,7 @@ void njDone(void) {
 
 /// Main call to decompress a JPEG
 nj_result_t njDecode(const void* jpeg, const int size) {
+	cudaDeviceReset();
 	njDone();
 	nj.pos = (const unsigned char*) jpeg;
 	nj.size = size & 0x7FFFFFFF;
