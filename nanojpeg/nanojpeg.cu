@@ -522,7 +522,7 @@ __global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout, int wid
 	int x = (blockIdx.x*blockDim.x + threadIdx.x)*4; // original pixel x
 	int y = blockIdx.y*blockDim.y + threadIdx.y; // original pixel y
 	int iin = stride*y+x;
-	int iout = (stride*y+x) << 1;
+	int iout = (stride*y+x) << 1; // TODO questa è width no? Altrove?
 	int i;
 	printf("UpsampleH x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
 	if(y < height)
