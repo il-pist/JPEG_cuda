@@ -58,6 +58,7 @@ typedef struct _nj_cmp {
 	int actabsel, dctabsel;
 	int dcpred;
 	unsigned char *pixels;  ///< pixel data
+	unsigned char *cupixels; ///< pixel data on device
 } nj_component_t;
 
 typedef struct _nj_ctx {
@@ -77,6 +78,7 @@ typedef struct _nj_ctx {
 	int block[64];          ///< TEMP un blocco temporaneo usato in njDecodeBlock
 	int rstinterval;
 	unsigned char *rgb;
+	unsigned char *curgb;
 } nj_context_t;
 
 static nj_context_t nj; /// Unique static state struct (not multithread-safe in this state)
@@ -92,13 +94,18 @@ inline bool failed(cudaError_t error)
   if (cudaSuccess == error)
     return false;
 
-  fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(error));
+  //fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(error));
+  printf("[failed] CUDA error: %s\n", cudaGetErrorString(error));
   return true;
 }
 
 NJ_FORCE_INLINE unsigned char njClip(const int x) {
 	return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char) x);
 }
+__device__ __forceinline__ unsigned char njCudaClip(const int x) {
+	return (x < 0) ? 0 : ((x > 0xFF) ? 0xFF : (unsigned char) x);
+}
+
 
 #define W1 2841
 #define W2 2676
@@ -359,7 +366,7 @@ NJ_INLINE void njDecodeDHT(void) {
 			remain -= currcnt << (16 - codelen);
 			if (remain < 0) njThrow(NJ_SYNTAX_ERROR);
 			for (i = 0;  i < currcnt;  ++i) {
-				register unsigned char code = nj.pos[i];
+				unsigned char code = nj.pos[i];
 				for (j = spread;  j;  --j) {
 					vlc->bits = (unsigned char) codelen;
 					vlc->code = code;
@@ -499,35 +506,7 @@ NJ_INLINE void njDecodeScan(void) {
 #define CF3Z (-3)
 #define CF2A (139)
 #define CF2B (-11)
-#define CF(x) njClip(((x) + 64) >> 7)
-
-NJ_INLINE void njUpsampleH(nj_component_t* c) {
-	const int xmax = c->width - 3;
-	unsigned char *out, *lin, *lout;
-	int x, y;
-	out = (unsigned char*) njAllocMem((c->width * c->height) << 1);
-	if (!out) njThrow(NJ_OUT_OF_MEM);
-	lin = c->pixels;
-	lout = out;
-	for (y = c->height;  y;  --y) {
-		lout[0] = CF(CF2A * lin[0] + CF2B * lin[1]);
-		lout[1] = CF(CF3X * lin[0] + CF3Y * lin[1] + CF3Z * lin[2]);
-		lout[2] = CF(CF3A * lin[0] + CF3B * lin[1] + CF3C * lin[2]);
-		for (x = 0;  x < xmax;  ++x) {
-			lout[(x << 1) + 3] = CF(CF4A * lin[x] + CF4B * lin[x + 1] + CF4C * lin[x + 2] + CF4D * lin[x + 3]);
-			lout[(x << 1) + 4] = CF(CF4D * lin[x] + CF4C * lin[x + 1] + CF4B * lin[x + 2] + CF4A * lin[x + 3]);
-		}
-		lin += c->stride;
-		lout += c->width << 1;
-		lout[-3] = CF(CF3A * lin[-1] + CF3B * lin[-2] + CF3C * lin[-3]);
-		lout[-2] = CF(CF3X * lin[-1] + CF3Y * lin[-2] + CF3Z * lin[-3]);
-		lout[-1] = CF(CF2A * lin[-1] + CF2B * lin[-2]);
-	}
-	c->width <<= 1;
-	c->stride = c->width;
-	njFreeMem((void*)c->pixels);
-	c->pixels = out;
-}
+#define CF(x) njCudaClip(((x) + 64) >> 7) // CUDA version, later this is redefined with the non-CUDA version
 
 /// Made to be called one thread every 4 horizontal input pixels;
 ///   each thread produces 8 horizontal pixels.
@@ -538,13 +517,15 @@ NJ_INLINE void njUpsampleH(nj_component_t* c) {
 /// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
 /// @param[in]  lin component->pixels
 /// @param[out] lout component->pixels double the width
-__device__ void njCudaUpsampleH(char* lin, char* lout, int width, int height, int stride) {
+__global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout/*, int width, int height, int stride*/) {
 	//const int xmax = c->width - 3;
+	int width=512, height=683, stride=512;
 	int x = (blockIdx.x*blockDim.x + threadIdx.x)*4; // original pixel x
 	int y = blockIdx.y*blockDim.y + threadIdx.y; // original pixel y
 	int iin = stride*y+x;
 	int iout = (stride*y+x) << 1;
 	int i;
+	//printf("UpsampleH x=%d y=%d, w=%d, h=%d, str=%d, in %08x out %08x\n", x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
 	if(y < height)
 	{
 		for(i=0; i<4 && x+i<width; i++, iin+=1, iout+=2) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
@@ -593,7 +574,8 @@ __device__ void njCudaUpsampleH(char* lin, char* lout, int width, int height, in
 /// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
 /// @param[in]  cin component->pixels
 /// @param[out] cout component->pixels double the width
-__device__ void njCudaUpsampleV(char* cin, char* cout, int width, int height, int stride) {
+__global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout/*, int width, int height, int stride*/) {
+	int width=512, height=683, stride=512;
 	const int w = width, s1 = stride, s2 = s1 + s1; // stride, double stride (oss after UpsampleH() stride=width)
 	int x = blockIdx.x*blockDim.x + threadIdx.x;       // original pixel x
 	int y = (blockIdx.y*blockDim.y + threadIdx.y)*4;   // original pixel y (one thread every 4 pixels in vertical)
@@ -601,6 +583,7 @@ __device__ void njCudaUpsampleV(char* cin, char* cout, int width, int height, in
 	int iout = (stride*y+x) << 1;
 	int i;
 	//out = (unsigned char*) njAllocMem((c->width * c->height) << 1);
+	//printf("UpsampleV x=%d y=%d, w=%d, h=%d, str=%d, in %08x out %08x\n", x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
 	if(x < width)
 	{
 		for(i=0; i<4 && y+i<width; i++, iin+=s1, iout+=2*width) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
@@ -638,6 +621,36 @@ __device__ void njCudaUpsampleV(char* cin, char* cout, int width, int height, in
 	//c->height <<= 1;
 	//c->stride = c->width;
 	//c->pixels = out;
+}
+
+#define CF(x) njClip(((x) + 64) >> 7) // redefine non-CUDA version
+
+NJ_INLINE void njUpsampleH(nj_component_t* c) {
+	const int xmax = c->width - 3;
+	unsigned char *out, *lin, *lout;
+	int x, y;
+	out = (unsigned char*) njAllocMem((c->width * c->height) << 1);
+	if (!out) njThrow(NJ_OUT_OF_MEM);
+	lin = c->pixels;
+	lout = out;
+	for (y = c->height;  y;  --y) {
+		lout[0] = CF(CF2A * lin[0] + CF2B * lin[1]);
+		lout[1] = CF(CF3X * lin[0] + CF3Y * lin[1] + CF3Z * lin[2]);
+		lout[2] = CF(CF3A * lin[0] + CF3B * lin[1] + CF3C * lin[2]);
+		for (x = 0;  x < xmax;  ++x) {
+			lout[(x << 1) + 3] = CF(CF4A * lin[x] + CF4B * lin[x + 1] + CF4C * lin[x + 2] + CF4D * lin[x + 3]);
+			lout[(x << 1) + 4] = CF(CF4D * lin[x] + CF4C * lin[x + 1] + CF4B * lin[x + 2] + CF4A * lin[x + 3]);
+		}
+		lin += c->stride;
+		lout += c->width << 1;
+		lout[-3] = CF(CF3A * lin[-1] + CF3B * lin[-2] + CF3C * lin[-3]);
+		lout[-2] = CF(CF3X * lin[-1] + CF3Y * lin[-2] + CF3Z * lin[-3]);
+		lout[-1] = CF(CF2A * lin[-1] + CF2B * lin[-2]);
+	}
+	c->width <<= 1;
+	c->stride = c->width;
+	njFreeMem((void*)c->pixels);
+	c->pixels = out;
 }
 
 NJ_INLINE void njUpsampleV(nj_component_t* c) {
@@ -696,10 +709,10 @@ NJ_INLINE void njUpsample(nj_component_t* c) {
 #define PX_PER_THREAD 16
 
 /// Expects to be called once for every PX_PER_THREAD horizontal pixels
-__device__ nj_ycbcr_to_rgb(
-	char* py, char* pcb, char* pcr,
+__global__ void nj_ycbcr_to_rgb(
+	unsigned char* py, unsigned char* pcb, unsigned char* pcr,
 	int ystride, int cbstride, int crstride,
-	char* rgbout, int width, int height
+	unsigned char* rgbout, int width, int height
 )
 {
 	int i;
@@ -710,21 +723,21 @@ __device__ nj_ycbcr_to_rgb(
 	if(y < height)
 	{
 		// find starting pointers
-		py   += ystride  * y  + x;
-		pcb  += cbstride * cb + x;
-		pcr  += crstride * cr + x;
+		py   += ystride  * y + x;
+		pcb  += cbstride * y + x;
+		pcr  += crstride * y + x;
 
-		prgb += (width * y + x) *3;
+		rgbout += (width * y + x) *3;
 
 		// convert (up to) PX_PER_THREAD pixels in this thread
-		for(i=0; i<PX_PER_THREAD && x < width; i++, py++, pcb++, pcr++, prgb+=3)
+		for(i=0; i<PX_PER_THREAD && x < width; i++, py++, pcb++, pcr++, rgbout+=3)
 		{
-			vy = py << 8;
-			vcb = pcb - 128;
-			vcr = pcr - 128;
-			prgb[0] = njClip((vy             + 359 * vcr + 128) >> 8);
-			prgb[1] = njClip((vy -  88 * vcb - 183 * vcr + 128) >> 8);
-			prgb[2] = njClip((vy + 454 * vcb             + 128) >> 8);
+			vy  = *py << 8;
+			vcb = *pcb - 128;
+			vcr = *pcr - 128;
+			rgbout[0] = njCudaClip((vy             + 359 * vcr + 128) >> 8);
+			rgbout[1] = njCudaClip((vy -  88 * vcb - 183 * vcr + 128) >> 8);
+			rgbout[2] = njCudaClip((vy + 454 * vcb             + 128) >> 8);
 		}
 	}
 }
@@ -732,19 +745,66 @@ __device__ nj_ycbcr_to_rgb(
 NJ_INLINE void njCudaConvert(void) {
 	int i;
 	nj_component_t* c;
+	unsigned char* newvec;
+	//dim3 dimBlock (16, 16);	//roundup 
+	//dim3 dimGrid ((n_blocks + 255)/256, 1);
+	//dim3 dimGridCbCr ((CbCr_blocks + 255)/256, 1);
+
+	if(failed(cudaMalloc((void**)&(nj.curgb), nj.width * nj.height))) // temporary memcpy to try this CUDA version
+		printf("malloc curgb fallita\n");
+	
 	for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) {
+		printf("componente %d: stride %d, mbheight %d, ssy %d\n", i, c->stride, nj.mbheight, c->ssy);
+
+		if(failed(cudaMalloc((void**)&(c->cupixels), c->stride * nj.mbheight * c->ssy << 3))) // temporary memcpy to try this CUDA version
+			printf("malloc componente fallita\n");
+		if(failed(cudaMemcpy( c->cupixels, c->pixels, c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
+			printf("memcpy iniziale componente fallita\n");
+		
+		printf("componente %d: pix %08x cupix %08x\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
+
 		//#if NJ_CHROMA_FILTER
 			while ((c->width < nj.width) || (c->height < nj.height)) {
 				if (c->width < nj.width)
 				{
-					njCudaUpsampleH<<<TODO, >>>(c);
+					if(failed(cudaMalloc((void**)&newvec, c->width * c->height * 2)))
+						printf("malloc newvec componente realloc orizzontale fallita\n");
+
+					dim3 dimBlock (8, 32);	// thread per grid cell: 8x32=256 thread per grid
+					dim3 dimGrid (((nj.width+3)/4 + 7)/8, (nj.height+31)/32); // grid size
+
+					printf("UpsampleH dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
+					printf("componente %d: pix %08x cupix %08x, newvec %08x 2a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
+					
+					njCudaUpsampleH<<<dimGrid, dimBlock>>>(c->cupixels, newvec/*, c->width, c->height, c->stride*/); // TODO call it better
+					
+					if (failed(cudaPeekAtLastError()))
+						printf("error UpsampleH component %d failed\n", i);
+
+					failed(cudaFree(c->cupixels));
+					c->cupixels = newvec;
 					c->width *= 2;
-					c->stride = width;
+					c->stride = c->width;
 				}
 				njCheckError();
 				if (c->height < nj.height)
 				{
-					njCudaUpsampleV<<<TODO, >>>(c);
+					if(failed(cudaMalloc((void**)&newvec, c->width * c->height * 2)))
+						printf("malloc newvec componente realloc verticale fallita\n");
+
+					dim3 dimBlock (32, 8);	// thread per grid cell
+					dim3 dimGrid ((nj.width + 31)/32, ((nj.height+3)/4 + 7)/8); // grid size
+
+					printf("UpsampleV dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
+					printf("componente %d: pix %08x cupix %08x, newvec %08x 3a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
+
+					njCudaUpsampleV<<<dimGrid, dimBlock>>>(c->cupixels, newvec/*, c->width, c->height, c->stride*/); // TODO call it better
+
+					if (failed(cudaPeekAtLastError()))
+						printf("error UpsampleV component %d failed\n", i);
+					
+					failed(cudaFree(c->cupixels));
+					c->cupixels = newvec;
 					c->height *= 2;
 					c->stride = c->width;
 				}
@@ -755,10 +815,28 @@ NJ_INLINE void njCudaConvert(void) {
 		//		njUpsample(c);
 		//#endif
 		if ((c->width < nj.width) || (c->height < nj.height)) njThrow(NJ_INTERNAL_ERR);
-	}
+
+		if (failed(cudaPeekAtLastError()))
+        	printf("peek last error component %d failed\n", i);
+	} // end foreach component
 	if (nj.ncomp == 3) {
 		// convert to RGB (8-stride may be already removed either horizontally or vertically in Upsample)
 		int x, yy;
+
+		dim3 dimBlock (8, 32);	// thread per grid cell: 8x32=256 thread per grid
+		dim3 dimGrid (((nj.width+PX_PER_THREAD-1)/PX_PER_THREAD + 7)/8, (nj.height+31)/32);
+
+		nj_ycbcr_to_rgb <<<dimGrid, dimBlock>>>( // TODO chiamare meglio: stream
+			nj.comp[0].cupixels, nj.comp[1].cupixels, nj.comp[2].cupixels,
+			nj.comp[0].stride, nj.comp[1].stride, nj.comp[2].stride,
+			nj.curgb, nj.width, nj.height
+		);
+
+		if(failed(cudaMemcpy(nj.rgb, nj.curgb, nj.width * nj.height, cudaMemcpyDeviceToHost)))
+			printf("memcpy 4 fallita\n");
+		cudaFree(nj.curgb);
+
+		/*
 		unsigned char *prgb = nj.rgb;
 		const unsigned char *py  = nj.comp[0].pixels;
 		const unsigned char *pcb = nj.comp[1].pixels;
@@ -775,7 +853,7 @@ NJ_INLINE void njCudaConvert(void) {
 			py += nj.comp[0].stride;
 			pcb += nj.comp[1].stride;
 			pcr += nj.comp[2].stride;
-		}
+		}*/
 	} else if (nj.comp[0].width != nj.comp[0].stride) {
 		// grayscale -> only remove 8-stride
 		unsigned char *pin = &nj.comp[0].pixels[nj.comp[0].stride];
@@ -816,9 +894,9 @@ NJ_INLINE void njConvert(void) {
 		const unsigned char *pcr = nj.comp[2].pixels;
 		for (yy = nj.height;  yy;  --yy) {
 			for (x = 0;  x < nj.width;  ++x) {
-				register int y = py[x] << 8;
-				register int cb = pcb[x] - 128;
-				register int cr = pcr[x] - 128;
+				int y = py[x] << 8;
+				int cb = pcb[x] - 128;
+				int cr = pcr[x] - 128;
 				*prgb++ = njClip((y            + 359 * cr + 128) >> 8);
 				*prgb++ = njClip((y -  88 * cb - 183 * cr + 128) >> 8);
 				*prgb++ = njClip((y + 454 * cb            + 128) >> 8);
@@ -880,7 +958,8 @@ nj_result_t njDecode(const void* jpeg, const int size) {
 	}
 	if (nj.error != __NJ_FINISHED) return nj.error;
 	nj.error = NJ_OK;
-	njConvert();
+	//njConvert();
+	njCudaConvert();
 	return nj.error;
 }
 
