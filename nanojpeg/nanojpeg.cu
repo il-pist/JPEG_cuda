@@ -759,6 +759,8 @@ NJ_INLINE void njCudaConvert(void) {
 		if(failed(cudaMemcpy( c->cupixels, c->pixels, c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
 			printf("memcpy iniziale componente fallita\n");
 		
+		if(failed(cudaDeviceSynchronize())) // ==================================
+			printf("sync after UpsampleH component %d failed.\n", i);
 		printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
 
 		//#if NJ_CHROMA_FILTER
@@ -778,8 +780,10 @@ NJ_INLINE void njCudaConvert(void) {
 					
 					if (failed(cudaPeekAtLastError()))
 						printf("error UpsampleH component %d failed\n", i);
-
-					failed(cudaFree(c->cupixels));
+					if(failed(cudaDeviceSynchronize())) // ==================================
+						printf("sync after UpsampleH component %d failed.\n", i);
+					if(failed(cudaFree(c->cupixels)))
+						printf("free cupixels UpsampleH component %d failed\n", i);
 					c->cupixels = newvec;
 					c->width *= 2;
 					c->stride = c->width;
@@ -795,11 +799,16 @@ NJ_INLINE void njCudaConvert(void) {
 
 					printf("UpsampleV dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
 					printf("componente %d: pix %08lx cupix %08lx, newvec %08lx 3a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
+
 					njCudaUpsampleV<<<dimGrid, dimBlock>>>(c->cupixels, newvec, c->width, c->height, c->stride); // TODO call it better
+
 					if (failed(cudaPeekAtLastError()))
 						printf("error UpsampleV component %d failed\n", i);
+					if(failed(cudaDeviceSynchronize())) // ==================================
+						printf("sync after UpsampleV component %d failed.\n", i);
 					
-					failed(cudaFree(c->cupixels));
+					if(failed(cudaFree(c->cupixels)))
+						printf("free cupixels UpsampleV component %d failed\n", i);
 					c->cupixels = newvec;
 					c->height *= 2;
 					c->stride = c->width;
@@ -813,7 +822,7 @@ NJ_INLINE void njCudaConvert(void) {
 		if ((c->width < nj.width) || (c->height < nj.height)) njThrow(NJ_INTERNAL_ERR);
 
 		if (failed(cudaPeekAtLastError()))
-        	printf("peek last error component %d failed\n", i);
+        	printf("peek last error failed alla fine del ciclo component %d\n", i);
 	} // end foreach component
 	if (nj.ncomp == 3) {
 		// convert to RGB (8-stride may be already removed either horizontally or vertically in Upsample)
