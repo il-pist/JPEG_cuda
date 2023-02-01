@@ -517,9 +517,8 @@ NJ_INLINE void njDecodeScan(void) {
 /// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
 /// @param[in]  lin component->pixels
 /// @param[out] lout component->pixels double the width
-__global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout/*, int width, int height, int stride*/) {
+__global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout, int width, int height, int stride) {
 	//const int xmax = c->width - 3;
-	int width=512, height=683, stride=512;
 	int x = (blockIdx.x*blockDim.x + threadIdx.x)*4; // original pixel x
 	int y = blockIdx.y*blockDim.y + threadIdx.y; // original pixel y
 	int iin = stride*y+x;
@@ -574,8 +573,7 @@ __global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout/*, int w
 /// @param[in]  stride real width of input component pixels, multiple of 8 (if applying for the first time to component, else =width)
 /// @param[in]  cin component->pixels
 /// @param[out] cout component->pixels double the width
-__global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout/*, int width, int height, int stride*/) {
-	int width=512, height=683, stride=512;
+__global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout, int width, int height, int stride) {
 	const int w = width, s1 = stride, s2 = s1 + s1; // stride, double stride (oss after UpsampleH() stride=width)
 	int x = blockIdx.x*blockDim.x + threadIdx.x;       // original pixel x
 	int y = (blockIdx.y*blockDim.y + threadIdx.y)*4;   // original pixel y (one thread every 4 pixels in vertical)
@@ -776,7 +774,7 @@ NJ_INLINE void njCudaConvert(void) {
 					printf("UpsampleH dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
 					printf("componente %d: pix %08x cupix %08x, newvec %08x 2a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
 					
-					njCudaUpsampleH<<<dimGrid, dimBlock>>>(c->cupixels, newvec/*, c->width, c->height, c->stride*/); // TODO call it better
+					njCudaUpsampleH<<<dimGrid, dimBlock>>>(c->cupixels, newvec, c->width, c->height, c->stride); // TODO call it better
 					
 					if (failed(cudaPeekAtLastError()))
 						printf("error UpsampleH component %d failed\n", i);
@@ -797,9 +795,7 @@ NJ_INLINE void njCudaConvert(void) {
 
 					printf("UpsampleV dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
 					printf("componente %d: pix %08x cupix %08x, newvec %08x 3a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
-
-					njCudaUpsampleV<<<dimGrid, dimBlock>>>(c->cupixels, newvec/*, c->width, c->height, c->stride*/); // TODO call it better
-
+					njCudaUpsampleV<<<dimGrid, dimBlock>>>(c->cupixels, newvec, c->width, c->height, c->stride); // TODO call it better
 					if (failed(cudaPeekAtLastError()))
 						printf("error UpsampleV component %d failed\n", i);
 					
