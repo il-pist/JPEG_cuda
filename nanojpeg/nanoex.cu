@@ -26,6 +26,9 @@ int main(int argc, char* argv[]) {
     char *buf;
     FILE *f;
 
+	printf("sizeof\n  int: %lu\n  unsigned long: %lu\n  char: %lu\n  unsigned char: %lud\n  void * : %lu\n",
+		sizeof(int), sizeof(unsigned long), sizeof(char), sizeof(unsigned char), sizeof(void*));
+
     if (argc < 2) {
         printf("Usage: %s <input.jpg> [<output.ppm>]\n", argv[0]);
         return 2;

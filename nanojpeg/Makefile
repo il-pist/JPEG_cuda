@@ -3,7 +3,7 @@ CC=/opt/cuda/bin/nvcc
 
 nanoex: nanojpeg.cu nanoex.cu
 	#$(CC) -D_NJ_EXAMPLE_PROGRAM -o $@ $^
-	$(CC) -I . -o $@ $^
+	$(CC) -lineinfo -I . -o $@ $^
 
 all: nanoex
 
