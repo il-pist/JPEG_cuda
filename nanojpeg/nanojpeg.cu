@@ -718,7 +718,7 @@ NJ_INLINE void njUpsample(nj_component_t* c) {
 
 /// Expects to be called one thread for every PX_PER_THREAD horizontal pixels
 __global__ void nj_ycbcr_to_rgb(
-	unsigned char* iny, unsigned char* incb, unsigned char* incr,
+	unsigned char* py, unsigned char* pcb, unsigned char* pcr,
 	int ystride, int cbstride, int crstride,
 	unsigned char* rgbout, int width, int height
 )
@@ -729,11 +729,11 @@ __global__ void nj_ycbcr_to_rgb(
 	int x = (blockIdx.x*blockDim.x + threadIdx.x)*PX_PER_THREAD;  // original pixel x (one thread every PX_PER_THREAD pixels in horizontal)
 	int y = blockIdx.y*blockDim.y + threadIdx.y;                  // original pixel y
 	
-	if(x==0 && y==0)
-	{
-		for(i=0; i<PX_PER_THREAD; i++)
-			printf("before nj_ycbcr_to_rgb: %3d %3d %3d\n", iny[i], incb[i], incr[i]);
-	}
+	// if(x==0 && y==0)
+	// {
+	// 	for(i=0; i<PX_PER_THREAD; i++)
+	// 		printf("before nj_ycbcr_to_rgb: %3d %3d %3d\n", iny[i], incb[i], incr[i]);
+	// }
 
 	if(y < height)
 	{
@@ -741,27 +741,38 @@ __global__ void nj_ycbcr_to_rgb(
 		//	printf("nj_ycbcr_to_rgb x=%d y=%d w=%d h=%d\n", x, y, width, height);
 
 		// find starting pointers
+		// Aritmetica sui puntatori non era il problema
 		//py   = iny  + ystride  * y + x; // single component: one byte each
 		//pcb  = incb + cbstride * y + x;
 		//pcr  = incr + crstride * y + x;
+		
+		py   += ystride  * y + x; // single component: one byte each
+		pcb  += cbstride * y + x;
+		pcr  += crstride * y + x;
+		rgbout += (width * y + x) *3; // rgb: 3 byte each
 
-		//rgbout += (width * y + x) *3; // rgb: 3 byte each
 
 		// convert (up to) PX_PER_THREAD pixels in this thread
-		for(i=0; i<PX_PER_THREAD && x < width; i++, x++, /*py++, pcb++, pcr++,*/ rgbout+=3)
+		for(i=0; i<PX_PER_THREAD && x < width; i++, x++, py++, pcb++, pcr++, rgbout+=3)
 		{
-			vy  = iny [ystride  * y + x] << 8;
-			vcb = incb[cbstride * y + x] - 128;
-			vcr = incr[crstride * y + x] - 128;
-			if(x<16 && y==0)
-				//printf("nj_ycbcr_to_rgb x=%3d y=%3d YCbCr: (%3d %3d %3d) %5d %5d %5d, PTR: %08lx, %08lx, %08lx, rgbout: %08lx\n", x, y, *py, *pcb, *pcr, vy, vcb, vcr, (unsigned long) py, (unsigned long) pcb, (unsigned long) pcr, (unsigned long) rgbout);
-				printf("nj_ycbcr_to_rgb x=%3d y=%3d YCbCr: %5d %5d %5d, PTR: %08lx, %08lx, %08lx, rgbout: %08lx\n", x, y, vy, vcb, vcr, (unsigned long) rgbout);
-			//rgbout[0] = njCudaClip((vy             + 359 * vcr + 128) >> 8);
-			//rgbout[1] = njCudaClip((vy -  88 * vcb - 183 * vcr + 128) >> 8);
-			//rgbout[2] = njCudaClip((vy + 454 * vcb             + 128) >> 8);
-			rgbout[0 + (width * y + x) *3] = njCudaClip((vy             + 359 * vcr + 128) >> 8);
-			rgbout[1 + (width * y + x) *3] = njCudaClip((vy -  88 * vcb - 183 * vcr + 128) >> 8);
-			rgbout[2 + (width * y + x) *3] = njCudaClip((vy + 454 * vcb             + 128) >> 8);
+			vy  = *py  << 8;
+			vcb = *pcb - 128;
+			vcr = *pcr - 128;
+			//vy  = iny [ystride  * y + x] << 8;
+			//vcb = incb[cbstride * y + x] - 128;
+			//vcr = incr[crstride * y + x] - 128;
+			// if(x<16 && y==0)
+			// 	printf("nj_ycbcr_to_rgb x=%3d y=%3d YCbCr: (%3d %3d %3d) %5d %5d %5d, PTR: %08lx, %08lx, %08lx, rgbout: %08lx\n", x, y, *py, *pcb, *pcr, vy, vcb, vcr, (unsigned long) py, (unsigned long) pcb, (unsigned long) pcr, (unsigned long) rgbout);
+			// 	//printf("nj_ycbcr_to_rgb x=%3d y=%3d YCbCr: %5d %5d %5d, PTR: %08lx, %08lx, %08lx, rgbout: %08lx\n", x, y, vy, vcb, vcr, (unsigned long) rgbout);
+			rgbout[0] = njCudaClip((vy             + 359 * vcr + 128) >> 8);
+			rgbout[1] = njCudaClip((vy -  88 * vcb - 183 * vcr + 128) >> 8);
+			rgbout[2] = njCudaClip((vy + 454 * vcb             + 128) >> 8);
+			//rgbout[0 + (width * y + x) *3] = njCudaClip((vy             + 359 * vcr + 128) >> 8); // TODO provare senza parentesi come dice Fulvio (width tipo stride)
+			//rgbout[1 + (width * y + x) *3] = njCudaClip((vy -  88 * vcb - 183 * vcr + 128) >> 8);
+			//rgbout[2 + (width * y + x) *3] = njCudaClip((vy + 454 * vcb             + 128) >> 8);
+			//rgbout[0 + (width * y + x) *3] = vy; // TODO rimuovere
+			//rgbout[2 + (width * y + x) *3] = vy;
+			//rgbout[1 + (width * y + x) *3] = vy;
 		}
 	}
 }
@@ -777,7 +788,7 @@ NJ_INLINE void njCudaConvert(void) {
 	for(i=0; i<16;i++)
 		printf("Prima, YCbCr: %3d %3d %3d\n", nj.comp[0].pixels[i], nj.comp[1].pixels[i], nj.comp[2].pixels[i]);
 	
-	if(failed(cudaMalloc((void**)&(nj.curgb), nj.width * nj.height))) // temporary memcpy to try this CUDA version
+	if(failed(cudaMalloc((void**)&(nj.curgb), nj.width * nj.height * 3))) // temporary memcpy to try this CUDA version
 		printf("malloc curgb fallita\n");
 	
 	for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) {
@@ -816,7 +827,7 @@ NJ_INLINE void njCudaConvert(void) {
 					c->cupixels = newvec;
 					c->width *= 2;
 					c->stride = c->width;
-					c->pixels = (unsigned char *) realloc(c->pixels, c->stride*c->height); // TODO rimuovere
+					//c->pixels = (unsigned char *) realloc(c->pixels, c->stride*c->height); // TODO rimuovere
 				}
 				njCheckError();
 				if (c->height < nj.height)
@@ -842,7 +853,7 @@ NJ_INLINE void njCudaConvert(void) {
 					c->cupixels = newvec;
 					c->height *= 2;
 					c->stride = c->width;
-					c->pixels = (unsigned char *) realloc(c->pixels, c->stride*c->height); // TODO rimuovere
+					//c->pixels = (unsigned char *) realloc(c->pixels, c->stride*c->height); // TODO rimuovere
 				}
 				njCheckError();
 			}
@@ -854,14 +865,14 @@ NJ_INLINE void njCudaConvert(void) {
 
 		if (failed(cudaPeekAtLastError()))
         	printf("peek last error failed alla fine del ciclo component %d\n", i);
-		memset(c->pixels, 0, c->stride * c->height);
-		printf("copia di %d byte componente %d.\n", c->stride * c->height, i);
-		if(failed(cudaMemcpy( c->pixels, c->cupixels, c->stride * c->height, cudaMemcpyDeviceToHost ))) // TODO rimuovere
-			printf("memcpy finale temporanea componente fallita, pixels=%08lx, cupix=%08lx\n", (unsigned long) c->pixels, (unsigned long) c->cupixels);
+		//memset(c->pixels, 0, c->stride * c->height); // TODO rimuovere solo diagnostica
+		//printf("copia di %d byte componente %d.\n", c->stride * c->height, i);
+		//if(failed(cudaMemcpy( c->pixels, c->cupixels, c->stride * c->height, cudaMemcpyDeviceToHost ))) // TODO rimuovere
+		//	printf("memcpy finale temporanea componente fallita, pixels=%08lx, cupix=%08lx\n", (unsigned long) c->pixels, (unsigned long) c->cupixels);
 	} // end foreach component
 
-	for(i=0; i<16;i++)
-		printf("dopo subsample, YCbCr: %3d %3d %3d\n", nj.comp[0].pixels[i], nj.comp[1].pixels[i], nj.comp[2].pixels[i]);
+	//for(i=0; i<16;i++)
+	//	printf("dopo subsample, YCbCr: %3d %3d %3d\n", nj.comp[0].pixels[i], nj.comp[1].pixels[i], nj.comp[2].pixels[i]);
 	
 	if (nj.ncomp == 3) {
 		// convert to RGB (8-stride may be already removed either horizontally or vertically in Upsample)
@@ -888,8 +899,8 @@ NJ_INLINE void njCudaConvert(void) {
 		if(failed(cudaDeviceSynchronize())) // ==================================
 			printf("sync after nj_ycbcr_to_rgb failed.\n");
 		
-		if(failed(cudaMemcpy(nj.rgb, nj.curgb, nj.width * nj.height, cudaMemcpyDeviceToHost)))
-			printf("memcpy 4 fallita\n");
+		if(failed(cudaMemcpy(nj.rgb, nj.curgb, nj.width * nj.height * 3, cudaMemcpyDeviceToHost)))
+			printf("memcpy rgb d2host fallita\n");
 		cudaFree(nj.curgb);
 
 		/*
