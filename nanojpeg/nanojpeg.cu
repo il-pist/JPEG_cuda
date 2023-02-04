@@ -583,7 +583,7 @@ __global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout, int wid
 	int x = blockIdx.x*blockDim.x + threadIdx.x;       // original pixel x
 	int y = (blockIdx.y*blockDim.y + threadIdx.y)*4;   // original pixel y (one thread every 4 pixels in vertical)
 	int iin = stride*y+x;
-	int iout = (stride*y+x) << 1;
+	int iout = stride*y*2 + x; // two output rows for each input row (y), but only one output pixel per input pixel
 	int i;
 	//out = (unsigned char*) njAllocMem((c->width * c->height) << 1);
 	//printf("UpsampleV x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
