@@ -447,6 +447,7 @@ NJ_INLINE void njDecodeSOF(void) {
 		c->stride = nj.mbwidth * c->ssx << 3;
 		if (((c->width < 3) && (c->ssx != ssxmax)) || ((c->height < 3) && (c->ssy != ssymax))) njThrow(NJ_UNSUPPORTED);
 		if (!(c->pixels = (unsigned char*) njAllocMem(c->stride * nj.mbheight * c->ssy << 3))) njThrow(NJ_OUT_OF_MEM);
+		if (!(c->intpixels = (int*) njAllocMem(sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) njThrow(NJ_OUT_OF_MEM);
 	}
 	if (nj.ncomp == 3) {
 		nj.rgb = (unsigned char*) njAllocMem(nj.width * nj.height * nj.ncomp);
@@ -544,21 +545,27 @@ static int njGetVLC(nj_vlc_code_t* vlc, unsigned char* code) {
 NJ_INLINE void njReadBlock(nj_component_t* c, int* out) {
 	unsigned char code = 0, bx = 0, by = 0;
 	int value, coef = 0;
-	njFillMem(nj.block, 0, sizeof(nj.block));
+	njFillMem(nj.block, 0, sizeof(nj.block)); // zero 8x8 block (OSS. only values !=0 are written)
 	c->dcpred += njGetVLC(&nj.vlctab[c->dctabsel][0], NULL);
+	printf("njGetVLC (init) DC: c->dcpred=%02x\n", c->dcpred);
 	nj.block[0] = (c->dcpred) * nj.qtab[c->qtsel][0];
 	do {
 		value = njGetVLC(&nj.vlctab[c->actabsel][0], &code);
+		printf("njGetVLC: value=%3d code=%3d; ", value, code);
 		if (!code) break;  // EOB
 		if (!(code & 0x0F) && (code != 0xF0)) njThrow(NJ_SYNTAX_ERROR);
 		coef += (code >> 4) + 1;
+		printf("coef=%2d; ", coef);
 		if (coef > 63) njThrow(NJ_SYNTAX_ERROR);
+
+		printf("i_block(zz)=%2d, val dequant=%d\n", njZZ[coef], value * nj.qtab[c->qtsel][coef]);
 		nj.block[(int) njZZ[coef]] = value * nj.qtab[c->qtsel][coef]; // to copy directly to the output vector, njZZ (in [0:63]) would need to be njZZ_x and njZZ_y (both in [0:7])
 	} while (coef < 63);
 	for(coef=0, by=0; by<8; by++) // copy to output vector
 	{
 		for(bx=0; bx<8; bx++)
 		{
+			printf("out copy bx=%d, by=%d: out=%08lx, out[%d] = nj.block[%d]\n", bx, by, (unsigned long) out, (by * c->stride + bx), coef);
 			out[by * c->stride + bx] = nj.block[coef]; // [by * 8 + bx];
 			coef++;
 		}
@@ -612,10 +619,17 @@ NJ_INLINE void njCudaDecodeScan(void) {
 	if (nj.pos[0] || (nj.pos[1] != 63) || nj.pos[2]) njThrow(NJ_UNSUPPORTED);
 	njSkip(nj.length);
 
+	// for(i=0; i<nj.ncomp; i++)
+	// {
+	// 	c = &(nj.comp[i]);
+	// 	if (!(c->intpixels = (int*) njAllocMem(sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) njThrow(NJ_OUT_OF_MEM);
+	// }
+
 	for (mbx = mby = 0;;) { // for each block (minimum coded unit, o minimum block: 8x8 o 16x16 o altri)
 		for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) // for each component in the image (Y,Cb,Cr)
 			for (sby = 0;  sby < c->ssy;  ++sby)           // for each block in the minimum coded unit
 				for (sbx = 0;  sbx < c->ssx;  ++sbx) {     // es. 1x1 normalmente, o 2x2 per Cb e Cr in 4:2:0
+					printf("readblock mbx=%4d mby=%4d, component %d sbx=%d sby=%d\n", mbx, mby, i, sbx, sby);
 					njReadBlock(c, &(c->intpixels[((mby * c->ssy + sby) * c->stride + mbx * c->ssx + sbx) << 3]));
 					njCheckError();
 				}
@@ -637,6 +651,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 	for(i=0; i<nj.ncomp; i++)
 	{
 		c = &(nj.comp[i]);
+		printf("  ==== IDCT component %d ====\n", i);
 
 		// TODO memcpy cuintpixels
 		if(failed(cudaMalloc((void**)&(c->cuintpixels), sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) // copy to GPU for IDFT
@@ -660,9 +675,19 @@ NJ_INLINE void njCudaDecodeScan(void) {
 		dimGrid = dim3 (((c->stride+7)/8 + 3)/4, (c->height+31)/32); // grid size (accounting for CUDA block size, and the 8 pixel per thread treated by RowIDCT)
 		njCudaRowIDCT<<<dimGrid, dimBlock>>>(c->cuintpixels, c->stride, c->height);
 
+		if (failed(cudaPeekAtLastError()))
+			printf("error RowIDCT component %d failed\n", i);
+		
 		dimBlock = dim3 (32, 4);	// thread per grid cell (block): 32x4=128 thread per block (32x32 pixel elaborati)
 		dimGrid = dim3 ((c->stride + 31)/32, ((c->height+7)/8 + 3)/4); // grid size (accounting for CUDA block size, and the 8 vertical pixel per thread treated by ColIDCT)
 		njCudaColIDCT<<<dimGrid, dimBlock>>>(c->cuintpixels, c->cupixels, c->stride, c->height);
+
+		if (failed(cudaPeekAtLastError()))
+			printf("error ColIDCT component %d failed\n", i);
+		if(failed(cudaDeviceSynchronize())) // ==================================
+			printf("sync after ColIDCT component %d failed.\n", i);
+		if(failed(cudaFree(c->cuintpixels)))
+			printf("free cuintpixels after IDCT component %d failed\n", i);
 	}
 
 	/*
@@ -1235,7 +1260,10 @@ void njInit(void) {
 void njDone(void) {
 	int i;
 	for (i = 0;  i < 3;  ++i)
+	{
 		if (nj.comp[i].pixels) njFreeMem((void*) nj.comp[i].pixels);
+		if (nj.comp[i].intpixels) njFreeMem((void*) nj.comp[i].intpixels);
+	}
 	if (nj.rgb) njFreeMem((void*) nj.rgb);
 	njInit();
 }
