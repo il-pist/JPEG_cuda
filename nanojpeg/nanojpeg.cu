@@ -57,6 +57,8 @@ typedef struct _nj_cmp {
 	int qtsel;              ///< ??? da descittore della component
 	int actabsel, dctabsel;
 	int dcpred;
+	int *intpixels; ///< pixel data for initial file read and IDCT
+	int *cuintpixels; ///< pixel data for initial file read and IDCT
 	unsigned char *pixels;  ///< pixel data
 	unsigned char *cupixels; ///< pixel data on device
 } nj_component_t;
@@ -114,6 +116,118 @@ __device__ __forceinline__ unsigned char njCudaClip(const int x) {
 #define W6 1108
 #define W7 565
 
+__global__ void njCudaRowIDCT(int* blk, int stride, int height) {
+	int x0, x1, x2, x3, x4, x5, x6, x7, x8;
+	
+	int x = (blockIdx.x*blockDim.x + threadIdx.x)*8; // original pixel x (8 pixel per thread)
+	int y = blockIdx.y*blockDim.y + threadIdx.y; // original pixel y
+	blk += stride * y + x;
+
+	if(x < stride && y < height)
+	{
+		if (!((x1 = blk[4] << 11)
+			| (x2 = blk[6])
+			| (x3 = blk[2])
+			| (x4 = blk[1])
+			| (x5 = blk[7])
+			| (x6 = blk[5])
+			| (x7 = blk[3])))
+		{
+			blk[0] = blk[1] = blk[2] = blk[3] = blk[4] = blk[5] = blk[6] = blk[7] = blk[0] << 3;
+			return;
+		}
+		x0 = (blk[0] << 11) + 128;
+		x8 = W7 * (x4 + x5);
+		x4 = x8 + (W1 - W7) * x4;
+		x5 = x8 - (W1 + W7) * x5;
+		x8 = W3 * (x6 + x7);
+		x6 = x8 - (W3 - W5) * x6;
+		x7 = x8 - (W3 + W5) * x7;
+		x8 = x0 + x1;
+		x0 -= x1;
+		x1 = W6 * (x3 + x2);
+		x2 = x1 - (W2 + W6) * x2;
+		x3 = x1 + (W2 - W6) * x3;
+		x1 = x4 + x6;
+		x4 -= x6;
+		x6 = x5 + x7;
+		x5 -= x7;
+		x7 = x8 + x3;
+		x8 -= x3;
+		x3 = x0 + x2;
+		x0 -= x2;
+		x2 = (181 * (x4 + x5) + 128) >> 8;
+		x4 = (181 * (x4 - x5) + 128) >> 8;
+		blk[0] = (x7 + x1) >> 8;
+		blk[1] = (x3 + x2) >> 8;
+		blk[2] = (x0 + x4) >> 8;
+		blk[3] = (x8 + x6) >> 8;
+		blk[4] = (x8 - x6) >> 8;
+		blk[5] = (x0 - x4) >> 8;
+		blk[6] = (x3 - x2) >> 8;
+		blk[7] = (x7 - x1) >> 8;
+	}
+}
+
+__global__ void njCudaColIDCT(const int* blk, unsigned char *out, int stride, int height) {
+	int x0, x1, x2, x3, x4, x5, x6, x7, x8;
+
+	int x = blockIdx.x*blockDim.x + threadIdx.x; // original pixel x
+	int y = (blockIdx.y*blockDim.y + threadIdx.y)*8; // original pixel y (8 pixel per thread)
+	blk += stride * y + x;
+	out += stride * y + x;
+
+	if(x < stride && y < height)
+	{
+		if (!((x1 = blk[stride*4] << 8)
+			| (x2 = blk[stride*6])
+			| (x3 = blk[stride*2])
+			| (x4 = blk[stride*1])
+			| (x5 = blk[stride*7])
+			| (x6 = blk[stride*5])
+			| (x7 = blk[stride*3])))
+		{
+			x1 = njCudaClip(((blk[0] + 32) >> 6) + 128);
+			for (x0 = 8;  x0;  --x0) {
+				*out = (unsigned char) x1;
+				out += stride;
+			}
+			return;
+		}
+		x0 = (blk[0] << 8) + 8192;
+		x8 = W7 * (x4 + x5) + 4;
+		x4 = (x8 + (W1 - W7) * x4) >> 3;
+		x5 = (x8 - (W1 + W7) * x5) >> 3;
+		x8 = W3 * (x6 + x7) + 4;
+		x6 = (x8 - (W3 - W5) * x6) >> 3;
+		x7 = (x8 - (W3 + W5) * x7) >> 3;
+		x8 = x0 + x1;
+		x0 -= x1;
+		x1 = W6 * (x3 + x2) + 4;
+		x2 = (x1 - (W2 + W6) * x2) >> 3;
+		x3 = (x1 + (W2 - W6) * x3) >> 3;
+		x1 = x4 + x6;
+		x4 -= x6;
+		x6 = x5 + x7;
+		x5 -= x7;
+		x7 = x8 + x3;
+		x8 -= x3;
+		x3 = x0 + x2;
+		x0 -= x2;
+		x2 = (181 * (x4 + x5) + 128) >> 8;
+		x4 = (181 * (x4 - x5) + 128) >> 8;
+		*out = njCudaClip(((x7 + x1) >> 14) + 128);  out += stride;
+		*out = njCudaClip(((x3 + x2) >> 14) + 128);  out += stride;
+		*out = njCudaClip(((x0 + x4) >> 14) + 128);  out += stride;
+		*out = njCudaClip(((x8 + x6) >> 14) + 128);  out += stride;
+		*out = njCudaClip(((x8 - x6) >> 14) + 128);  out += stride;
+		*out = njCudaClip(((x0 - x4) >> 14) + 128);  out += stride;
+		*out = njCudaClip(((x3 - x2) >> 14) + 128);  out += stride;
+		*out = njCudaClip(((x7 - x1) >> 14) + 128);
+	}
+}
+
+/// ======= Originale =============
 NJ_INLINE void njRowIDCT(int* blk) {
 	int x0, x1, x2, x3, x4, x5, x6, x7, x8;
 	if (!((x1 = blk[4] << 11)
@@ -410,11 +524,12 @@ NJ_INLINE void njDecodeDRI(void) {
 	njSkip(nj.length);
 }
 
+// Get Variable Length Code (VLC): decodes Huffman compression
 static int njGetVLC(nj_vlc_code_t* vlc, unsigned char* code) {
 	int value = njShowBits(16);
 	int bits = vlc[value].bits;
 	if (!bits) { nj.error = NJ_SYNTAX_ERROR; return 0; }
-	njSkipBits(bits);
+	njSkipBits(bits); // the correct number of bits for the code are consumed, even though 
 	value = vlc[value].code;
 	if (code) *code = (unsigned char) value;
 	bits = value & 15;
@@ -425,7 +540,36 @@ static int njGetVLC(nj_vlc_code_t* vlc, unsigned char* code) {
 	return value;
 }
 
-/// Decode a block: zigzag, de-quantization, iDCT (row, col)
+/// Read a block: Huffman decoding and zigzag only, to be followed by CUDA Row/ColIDCT
+NJ_INLINE void njReadBlock(nj_component_t* c, int* out) {
+	unsigned char code = 0, bx = 0, by = 0;
+	int value, coef = 0;
+	njFillMem(nj.block, 0, sizeof(nj.block));
+	c->dcpred += njGetVLC(&nj.vlctab[c->dctabsel][0], NULL);
+	nj.block[0] = (c->dcpred) * nj.qtab[c->qtsel][0];
+	do {
+		value = njGetVLC(&nj.vlctab[c->actabsel][0], &code);
+		if (!code) break;  // EOB
+		if (!(code & 0x0F) && (code != 0xF0)) njThrow(NJ_SYNTAX_ERROR);
+		coef += (code >> 4) + 1;
+		if (coef > 63) njThrow(NJ_SYNTAX_ERROR);
+		nj.block[(int) njZZ[coef]] = value * nj.qtab[c->qtsel][coef]; // to copy directly to the output vector, njZZ (in [0:63]) would need to be njZZ_x and njZZ_y (both in [0:7])
+	} while (coef < 63);
+	for(coef=0, by=0; by<8; by++) // copy to output vector
+	{
+		for(bx=0; bx<8; bx++)
+		{
+			out[by * c->stride + bx] = nj.block[coef]; // [by * 8 + bx];
+			coef++;
+		}
+	}
+	// for (coef = 0;  coef < 64;  coef += 8)
+	// 	njRowIDCT(&nj.block[coef]);
+	// for (coef = 0;  coef < 8;  ++coef)
+	// 	njColIDCT(&nj.block[coef], &out[coef], c->stride);
+}
+
+/// Decode a block: Huffman decoding, zigzag, de-quantization, iDCT (row, col)
 NJ_INLINE void njDecodeBlock(nj_component_t* c, unsigned char* out) {
 	unsigned char code = 0;
 	int value, coef = 0;
@@ -446,10 +590,108 @@ NJ_INLINE void njDecodeBlock(nj_component_t* c, unsigned char* out) {
 		njColIDCT(&nj.block[coef], &out[coef], c->stride);
 }
 
-/***************************************
- * this function must be parallelized? *
- ***************************************/
-/// Read and deccompress whole image (all blocks)
+/// Read and decompress whole image (all blocks)
+/// TODO separare in 4 stream, lanciare in parallelo tutti durante lettura (x3 componenti?)
+NJ_INLINE void njCudaDecodeScan(void) {
+	int i, mbx, mby, sbx, sby;
+	dim3 dimBlock, dimGrid;
+	int rstcount = nj.rstinterval, nextrst = 0;
+	nj_component_t* c;
+	njDecodeLength();
+	njCheckError();
+	if (nj.length < (4 + 2 * nj.ncomp)) njThrow(NJ_SYNTAX_ERROR);
+	if (nj.pos[0] != nj.ncomp) njThrow(NJ_UNSUPPORTED);
+	njSkip(1);
+	for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) {
+		if (nj.pos[0] != c->cid) njThrow(NJ_SYNTAX_ERROR);
+		if (nj.pos[1] & 0xEE) njThrow(NJ_SYNTAX_ERROR);
+		c->dctabsel = nj.pos[1] >> 4;
+		c->actabsel = (nj.pos[1] & 1) | 2;
+		njSkip(2);
+	}
+	if (nj.pos[0] || (nj.pos[1] != 63) || nj.pos[2]) njThrow(NJ_UNSUPPORTED);
+	njSkip(nj.length);
+
+	for (mbx = mby = 0;;) { // for each block (minimum coded unit, o minimum block: 8x8 o 16x16 o altri)
+		for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) // for each component in the image (Y,Cb,Cr)
+			for (sby = 0;  sby < c->ssy;  ++sby)           // for each block in the minimum coded unit
+				for (sbx = 0;  sbx < c->ssx;  ++sbx) {     // es. 1x1 normalmente, o 2x2 per Cb e Cr in 4:2:0
+					njReadBlock(c, &(c->intpixels[((mby * c->ssy + sby) * c->stride + mbx * c->ssx + sbx) << 3]));
+					njCheckError();
+				}
+		if (++mbx >= nj.mbwidth) {
+			mbx = 0;
+			if (++mby >= nj.mbheight) break;
+		}
+		if (nj.rstinterval && !(--rstcount)) {
+			njByteAlign();
+			i = njGetBits(16);
+			if (((i & 0xFFF8) != 0xFFD0) || ((i & 7) != nextrst)) njThrow(NJ_SYNTAX_ERROR);
+			nextrst = (nextrst + 1) & 7;
+			rstcount = nj.rstinterval;
+			for (i = 0;  i < 3;  ++i)
+				nj.comp[i].dcpred = 0;
+		}
+	}
+
+	for(i=0; i<nj.ncomp; i++)
+	{
+		c = &(nj.comp[i]);
+
+		// TODO memcpy cuintpixels
+		if(failed(cudaMalloc((void**)&(c->cuintpixels), sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) // copy to GPU for IDFT
+			printf("malloc cuintpixels componente %d fallita\n", i);
+		if(failed(cudaMemcpy( c->cuintpixels, c->intpixels, sizeof(int) * c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
+			printf("memcpy cuintpixels componente %d fallita\n", i);
+		
+		if(failed(cudaDeviceSynchronize())) // ==================================
+			printf("sync after memcpy cuintpixels component %d failed.\n", i);
+
+		if(failed(cudaMalloc((void**)&(c->cupixels), c->stride * nj.mbheight * c->ssy << 3))) // alloc cupixels for IDFT results
+			printf("malloc componente fallita\n");
+		//if(failed(cudaMemcpy( c->cupixels, c->pixels, c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
+		//	printf("memcpy iniziale componente fallita\n");
+		
+		if(failed(cudaDeviceSynchronize())) // ==================================
+			printf("sync after UpsampleH component %d failed.\n", i);
+		printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
+
+		dimBlock = dim3 (4, 32);	// thread per grid cell (block): 4x32=128 thread per block (32x32 pixel elaborati)
+		dimGrid = dim3 (((c->stride+7)/8 + 3)/4, (c->height+31)/32); // grid size (accounting for CUDA block size, and the 8 pixel per thread treated by RowIDCT)
+		njCudaRowIDCT<<<dimGrid, dimBlock>>>(c->cuintpixels, c->stride, c->height);
+
+		dimBlock = dim3 (32, 4);	// thread per grid cell (block): 32x4=128 thread per block (32x32 pixel elaborati)
+		dimGrid = dim3 ((c->stride + 31)/32, ((c->height+7)/8 + 3)/4); // grid size (accounting for CUDA block size, and the 8 vertical pixel per thread treated by ColIDCT)
+		njCudaColIDCT<<<dimGrid, dimBlock>>>(c->cuintpixels, c->cupixels, c->stride, c->height);
+	}
+
+	/*
+	for (mbx = mby = 0;;) { // for each block (minimum coded unit, o minimum block: 8x8 o 16x16 o altri)
+		for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) // for each component in the image (Y,Cb,Cr)
+			for (sby = 0;  sby < c->ssy;  ++sby)           // for each block in the minimum coded unit
+				for (sbx = 0;  sbx < c->ssx;  ++sbx) {     // es. 1x1 normalmente, o 2x2 per Cb e Cr in 4:2:0
+					njDecodeBlock(c, &c->pixels[((mby * c->ssy + sby) * c->stride + mbx * c->ssx + sbx) << 3]);
+					njCheckError();
+				}
+		if (++mbx >= nj.mbwidth) {
+			mbx = 0;
+			if (++mby >= nj.mbheight) break;
+		}
+		if (nj.rstinterval && !(--rstcount)) {
+			njByteAlign();
+			i = njGetBits(16);
+			if (((i & 0xFFF8) != 0xFFD0) || ((i & 7) != nextrst)) njThrow(NJ_SYNTAX_ERROR);
+			nextrst = (nextrst + 1) & 7;
+			rstcount = nj.rstinterval;
+			for (i = 0;  i < 3;  ++i)
+				nj.comp[i].dcpred = 0;
+		}
+	}
+	*/
+	nj.error = __NJ_FINISHED;
+}
+
+/// Read and decompress whole image (all blocks)
 NJ_INLINE void njDecodeScan(void) {
 	int i, mbx, mby, sbx, sby;
 	int rstcount = nj.rstinterval, nextrst = 0;
@@ -794,13 +1036,13 @@ NJ_INLINE void njCudaConvert(void) {
 	for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) {
 		printf("componente %d: stride %d, mbheight %d, ssy %d\n", i, c->stride, nj.mbheight, c->ssy);
 
-		if(failed(cudaMalloc((void**)&(c->cupixels), c->stride * nj.mbheight * c->ssy << 3))) // temporary memcpy to try this CUDA version
-			printf("malloc componente fallita\n");
-		if(failed(cudaMemcpy( c->cupixels, c->pixels, c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
-			printf("memcpy iniziale componente fallita\n");
+		// if(failed(cudaMalloc((void**)&(c->cupixels), c->stride * nj.mbheight * c->ssy << 3))) // temporary memcpy to try this CUDA version, moved to njCudaDecodeScan()
+		// 	printf("malloc componente fallita\n");
+		// if(failed(cudaMemcpy( c->cupixels, c->pixels, c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
+		// 	printf("memcpy iniziale componente fallita\n");
 		
-		if(failed(cudaDeviceSynchronize())) // ==================================
-			printf("sync after UpsampleH component %d failed.\n", i);
+		// if(failed(cudaDeviceSynchronize())) // ==================================
+		// 	printf("sync after UpsampleH component %d failed.\n", i);
 		printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
 
 		//#if NJ_CHROMA_FILTER
@@ -1015,7 +1257,7 @@ nj_result_t njDecode(const void* jpeg, const int size) {
 			case 0xC4: njDecodeDHT();  break;
 			case 0xDB: njDecodeDQT();  break;
 			case 0xDD: njDecodeDRI();  break;
-			case 0xDA: njDecodeScan(); break;
+			case 0xDA: njCudaDecodeScan(); break; // CUDA mod
 			case 0xFE: njSkipMarker(); break;
 			default:
 				if ((nj.pos[-1] & 0xF0) == 0xE0)
