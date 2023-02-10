@@ -203,6 +203,7 @@ void njDone(void);
 #ifdef  _NJ_EXAMPLE_PROGRAM
 
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -210,6 +211,9 @@ int main(int argc, char* argv[]) {
     int size;
     char *buf;
     FILE *f;
+
+	clock_t start, end;
+	start=clock();
 
     if (argc < 2) {
         printf("Usage: %s <input.jpg> [<output.ppm>]\n", argv[0]);
@@ -244,6 +248,9 @@ int main(int argc, char* argv[]) {
     fwrite(njGetImage(), 1, njGetImageSize(), f);
     fclose(f);
     njDone();
+
+	end=clock();
+	printf("\nExecution time: %f\n", (double)(end-start) / CLOCKS_PER_SEC);
     return 0;
 }
 

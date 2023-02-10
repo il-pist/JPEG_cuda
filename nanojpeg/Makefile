@@ -1,6 +1,9 @@
 #CC=/usr/local/cuda/bin/nvcc
 CC=/opt/cuda/bin/nvcc
 
+nanoex_orig: nanojpeg.c
+	$(CC) -D_NJ_EXAMPLE_PROGRAM -o $@ $^
+
 nanoex: nanojpeg.cu nanoex.cu
 	#$(CC) -D_NJ_EXAMPLE_PROGRAM -o $@ $^
 	$(CC) -lineinfo -I . -o $@ $^
