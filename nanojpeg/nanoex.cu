@@ -25,10 +25,12 @@ int main(int argc, char* argv[]) {
     int size;
     char *buf;
     FILE *f;
+	clock_t start, end;
 
-	printf("sizeof\n  int: %lu\n  unsigned long: %lu\n  char: %lu\n  unsigned char: %lud\n  void * : %lu\n",
-		sizeof(int), sizeof(unsigned long), sizeof(char), sizeof(unsigned char), sizeof(void*));
+	//printf("sizeof\n  int: %lu\n  unsigned long: %lu\n  char: %lu\n  unsigned char: %lud\n  void * : %lu\n",
+	//	sizeof(int), sizeof(unsigned long), sizeof(char), sizeof(unsigned char), sizeof(void*));
 
+	start=clock();
     if (argc < 2) {
         printf("Usage: %s <input.jpg> [<output.ppm>]\n", argv[0]);
         return 2;
@@ -62,6 +64,9 @@ int main(int argc, char* argv[]) {
     fwrite(njGetImage(), 1, njGetImageSize(), f);
     fclose(f);
     njDone();
+
+	end=clock();
+	printf("\nExecution time: %f\n", double(end-start) / CLOCKS_PER_SEC);
     return 0;
 }
 

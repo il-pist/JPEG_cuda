@@ -547,25 +547,25 @@ NJ_INLINE void njReadBlock(nj_component_t* c, int* out) {
 	int value, coef = 0;
 	njFillMem(nj.block, 0, sizeof(nj.block)); // zero 8x8 block (OSS. only values !=0 are written)
 	c->dcpred += njGetVLC(&nj.vlctab[c->dctabsel][0], NULL);
-	printf("njGetVLC (init) DC: c->dcpred=%02x\n", c->dcpred);
+	//printf("njGetVLC (init) DC: c->dcpred=%02x\n", c->dcpred);
 	nj.block[0] = (c->dcpred) * nj.qtab[c->qtsel][0];
 	do {
 		value = njGetVLC(&nj.vlctab[c->actabsel][0], &code);
-		printf("njGetVLC: value=%3d code=%3d; ", value, code);
+		//printf("njGetVLC: value=%3d code=%3d; ", value, code);
 		if (!code) break;  // EOB
 		if (!(code & 0x0F) && (code != 0xF0)) njThrow(NJ_SYNTAX_ERROR);
 		coef += (code >> 4) + 1;
-		printf("coef=%2d; ", coef);
+		//printf("coef=%2d; ", coef);
 		if (coef > 63) njThrow(NJ_SYNTAX_ERROR);
 
-		printf("i_block(zz)=%2d, val dequant=%d\n", njZZ[coef], value * nj.qtab[c->qtsel][coef]);
+		//printf("i_block(zz)=%2d, val dequant=%d\n", njZZ[coef], value * nj.qtab[c->qtsel][coef]);
 		nj.block[(int) njZZ[coef]] = value * nj.qtab[c->qtsel][coef]; // to copy directly to the output vector, njZZ (in [0:63]) would need to be njZZ_x and njZZ_y (both in [0:7])
 	} while (coef < 63);
 	for(coef=0, by=0; by<8; by++) // copy to output vector
 	{
 		for(bx=0; bx<8; bx++)
 		{
-			printf("out copy bx=%d, by=%d: out=%08lx, out[%d] = nj.block[%d]\n", bx, by, (unsigned long) out, (by * c->stride + bx), coef);
+			//printf("out copy bx=%d, by=%d: out=%08lx, out[%d] = nj.block[%d]\n", bx, by, (unsigned long) out, (by * c->stride + bx), coef);
 			out[by * c->stride + bx] = nj.block[coef]; // [by * 8 + bx];
 			coef++;
 		}
@@ -629,7 +629,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 		for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) // for each component in the image (Y,Cb,Cr)
 			for (sby = 0;  sby < c->ssy;  ++sby)           // for each block in the minimum coded unit
 				for (sbx = 0;  sbx < c->ssx;  ++sbx) {     // es. 1x1 normalmente, o 2x2 per Cb e Cr in 4:2:0
-					printf("readblock mbx=%4d mby=%4d, component %d sbx=%d sby=%d\n", mbx, mby, i, sbx, sby);
+					//printf("readblock mbx=%4d mby=%4d, component %d sbx=%d sby=%d\n", mbx, mby, i, sbx, sby);
 					njReadBlock(c, &(c->intpixels[((mby * c->ssy + sby) * c->stride + mbx * c->ssx + sbx) << 3]));
 					njCheckError();
 				}
@@ -651,7 +651,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 	for(i=0; i<nj.ncomp; i++)
 	{
 		c = &(nj.comp[i]);
-		printf("  ==== IDCT component %d ====\n", i);
+		//printf("  ==== IDCT component %d ====\n", i);
 
 		// TODO memcpy cuintpixels
 		if(failed(cudaMalloc((void**)&(c->cuintpixels), sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) // copy to GPU for IDFT
@@ -669,7 +669,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 		
 		if(failed(cudaDeviceSynchronize())) // ==================================
 			printf("sync after UpsampleH component %d failed.\n", i);
-		printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
+		//printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
 
 		dimBlock = dim3 (4, 32);	// thread per grid cell (block): 4x32=128 thread per block (32x32 pixel elaborati)
 		dimGrid = dim3 (((c->stride+7)/8 + 3)/4, (c->height+31)/32); // grid size (accounting for CUDA block size, and the 8 pixel per thread treated by RowIDCT)
@@ -796,10 +796,10 @@ __global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout, int wid
 	{
 		for(i=0; i<4 && x+i<width; i++, iin+=1, iout+=2) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
 		{
-			if(iout+1 >= width*height*2) // TODO rimuovere
-				printf("UpsampleH iout %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iout, x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
-			if(iin >= stride*height)
-				printf("UpsampleH iin %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iin, x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
+			//if(iout+1 >= width*height*2) // TODO rimuovere
+			//	printf("UpsampleH iout %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iout, x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
+			//if(iin >= stride*height)
+			//	printf("UpsampleH iin %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iin, x, y, width, height, stride, (unsigned long) lin, (unsigned long) lout);
 
 			if(x+i == 0) // first pixel (*000)
 			{
@@ -858,10 +858,10 @@ __global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout, int wid
 	{
 		for(i=0; i<4 && y+i<height; i++, iin+=s1, iout+=2*width) // elaborate (4px in, 8px out) for each thread, stopping at the end of img
 		{
-			if(iout+1 >= width*height*2) // TODO rimuovere
-				printf("UpsampleV iout %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iout, x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
-			if(iin >= stride*height)
-				printf("UpsampleV iin %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iin, x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
+			//if(iout+1 >= width*height*2) // TODO rimuovere
+			//	printf("UpsampleV iout %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iout, x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
+			//if(iin >= stride*height)
+			//	printf("UpsampleV iin %d out of bounds x=%d y=%d, w=%d, h=%d, str=%d, in %08lx out %08lx\n", iin, x, y, width, height, stride, (unsigned long) cin, (unsigned long) cout);
 
 			if(y+i == 0) // first pixel (*000)
 			{
@@ -1052,14 +1052,14 @@ NJ_INLINE void njCudaConvert(void) {
 	//dim3 dimGrid ((n_blocks + 255)/256, 1);
 	//dim3 dimGridCbCr ((CbCr_blocks + 255)/256, 1);
 
-	for(i=0; i<16;i++)
-		printf("Prima, YCbCr: %3d %3d %3d\n", nj.comp[0].pixels[i], nj.comp[1].pixels[i], nj.comp[2].pixels[i]);
+	//for(i=0; i<16;i++)
+	//	printf("Prima, YCbCr: %3d %3d %3d\n", nj.comp[0].pixels[i], nj.comp[1].pixels[i], nj.comp[2].pixels[i]);
 	
 	if(failed(cudaMalloc((void**)&(nj.curgb), nj.width * nj.height * 3))) // temporary memcpy to try this CUDA version
 		printf("malloc curgb fallita\n");
 	
 	for (i = 0, c = nj.comp;  i < nj.ncomp;  ++i, ++c) {
-		printf("componente %d: stride %d, mbheight %d, ssy %d\n", i, c->stride, nj.mbheight, c->ssy);
+		//printf("componente %d: stride %d, mbheight %d, ssy %d\n", i, c->stride, nj.mbheight, c->ssy);
 
 		// if(failed(cudaMalloc((void**)&(c->cupixels), c->stride * nj.mbheight * c->ssy << 3))) // temporary memcpy to try this CUDA version, moved to njCudaDecodeScan()
 		// 	printf("malloc componente fallita\n");
@@ -1068,7 +1068,7 @@ NJ_INLINE void njCudaConvert(void) {
 		
 		// if(failed(cudaDeviceSynchronize())) // ==================================
 		// 	printf("sync after UpsampleH component %d failed.\n", i);
-		printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
+		//printf("componente %d: pix %08lx cupix %08lx\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels);
 
 		//#if NJ_CHROMA_FILTER
 			while ((c->width < nj.width) || (c->height < nj.height)) {
@@ -1080,8 +1080,8 @@ NJ_INLINE void njCudaConvert(void) {
 					dim3 dimBlock (8, 32);	// thread per grid cell: 8x32=256 thread per grid
 					dim3 dimGrid (((nj.width+3)/4 + 7)/8, (nj.height+31)/32); // grid size
 
-					printf("UpsampleH dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
-					printf("componente %d: pix %08lx cupix %08lx, newvec %08lx 2a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
+					//printf("UpsampleH dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
+					//printf("componente %d: pix %08lx cupix %08lx, newvec %08lx 2a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
 					
 					njCudaUpsampleH<<<dimGrid, dimBlock>>>(c->cupixels, newvec, c->width, c->height, c->stride); // TODO call it better
 					
@@ -1105,8 +1105,8 @@ NJ_INLINE void njCudaConvert(void) {
 					dim3 dimBlock (32, 8);	// thread per grid cell
 					dim3 dimGrid ((nj.width + 31)/32, ((nj.height+3)/4 + 7)/8); // grid size
 
-					printf("UpsampleV dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
-					printf("componente %d: pix %08lx cupix %08lx, newvec %08lx 3a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
+					//printf("UpsampleV dimGrid %dx%d dimBlock %dx%d\n", dimGrid.x, dimGrid.y, dimBlock.x, dimBlock.y);
+					//printf("componente %d: pix %08lx cupix %08lx, newvec %08lx 3a print\n", i, (unsigned long) c->pixels, (unsigned long) c->cupixels, (unsigned long) newvec);
 
 					njCudaUpsampleV<<<dimGrid, dimBlock>>>(c->cupixels, newvec, c->width, c->height, c->stride); // TODO call it better
 
@@ -1150,10 +1150,10 @@ NJ_INLINE void njCudaConvert(void) {
 		//dim3 dimBlock (1, 8);	// thread per grid cell: 8x32=256 thread per grid
 		//dim3 dimGrid (1, 1);
 
-		printf("nj_ycbcr_to_rgb block %dx%d, dimGrid %dx%d\n", dimBlock.x, dimBlock.y, dimGrid.x, dimGrid.y);
-		printf("  cupixels: %08lx, %08lx, %08lx\n", (unsigned long) nj.comp[0].cupixels, (unsigned long) nj.comp[1].cupixels, (unsigned long) nj.comp[2].cupixels);
-		printf("  strides:  %8d, %8d, %8d\n", nj.comp[0].stride, nj.comp[1].stride, nj.comp[2].stride);
-		printf("  curgb:    %08lx, w=%d h=%d\n", (unsigned long) nj.curgb, nj.width, nj.height);
+		//printf("nj_ycbcr_to_rgb block %dx%d, dimGrid %dx%d\n", dimBlock.x, dimBlock.y, dimGrid.x, dimGrid.y);
+		//printf("  cupixels: %08lx, %08lx, %08lx\n", (unsigned long) nj.comp[0].cupixels, (unsigned long) nj.comp[1].cupixels, (unsigned long) nj.comp[2].cupixels);
+		//printf("  strides:  %8d, %8d, %8d\n", nj.comp[0].stride, nj.comp[1].stride, nj.comp[2].stride);
+		//printf("  curgb:    %08lx, w=%d h=%d\n", (unsigned long) nj.curgb, nj.width, nj.height);
 
 		nj_ycbcr_to_rgb <<<dimGrid, dimBlock>>>( // TODO chiamare meglio: stream
 			nj.comp[0].cupixels, nj.comp[1].cupixels, nj.comp[2].cupixels,
