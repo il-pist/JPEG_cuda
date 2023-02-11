@@ -115,7 +115,8 @@ typedef enum _nj_result {
 // njInit: Initialize NanoJPEG.
 // For safety reasons, this should be called at least one time before using
 // using any of the other NanoJPEG functions.
-void njInit(void);
+/// @param use_cuda set to 0 to disable CUDA and fall back to CPU
+void njInit(int use_cuda);
 
 // njDecode: Decode a JPEG image.
 // Decodes a memory dump of a JPEG file into internal buffers.

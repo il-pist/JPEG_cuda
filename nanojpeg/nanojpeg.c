@@ -250,7 +250,7 @@ int main(int argc, char* argv[]) {
     njDone();
 
 	end=clock();
-	printf("\nExecution time: %f\n", (double)(end-start) / CLOCKS_PER_SEC);
+	printf("\nExecution time (original): %f\n", (double)(end-start) / CLOCKS_PER_SEC);
     return 0;
 }
 

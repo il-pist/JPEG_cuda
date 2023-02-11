@@ -65,6 +65,7 @@ typedef struct _nj_cmp {
 
 typedef struct _nj_ctx {
 	nj_result_t error;
+	int use_cuda;
 	const unsigned char *pos;
 	int size;
 	int length;
@@ -773,7 +774,8 @@ NJ_INLINE void njDecodeScan(void) {
 #define CF3Z (-3)
 #define CF2A (139)
 #define CF2B (-11)
-#define CF(x) njCudaClip(((x) + 64) >> 7) // CUDA version, later this is redefined with the non-CUDA version
+#define CUCF(x) njCudaClip(((x) + 64) >> 7) // CUDA version, later this is redefined with the non-CUDA version
+#define CF(x) njClip(((x) + 64) >> 7) // non-CUDA version
 
 /// Made to be called one thread every 4 horizontal input pixels;
 ///   each thread produces 8 horizontal pixels.
@@ -803,31 +805,31 @@ __global__ void njCudaUpsampleH(unsigned char* lin, unsigned char* lout, int wid
 
 			if(x+i == 0) // first pixel (*000)
 			{
-				lout[iout+0] = CF(CF2A * lin[iin+0] + CF2B * lin[iin+1]);                         // (offset = -2 ?)
-				lout[iout+1] = CF(CF3X * lin[iin+0] + CF3Y * lin[iin+1] + CF3Z * lin[iin+2]);     // (offset = -1 ?)
+				lout[iout+0] = CUCF(CF2A * lin[iin+0] + CF2B * lin[iin+1]);                         // (offset = -2 ?)
+				lout[iout+1] = CUCF(CF3X * lin[iin+0] + CF3Y * lin[iin+1] + CF3Z * lin[iin+2]);     // (offset = -1 ?)
 			}
 			else if(x+i == 1) // second pixel (0*00)
 			{
-				lout[iout+0] = CF(CF3A * lin[iin-1] + CF3B * lin[iin+0] + CF3C * lin[iin+1]);     // (offset = -1 ?)
+				lout[iout+0] = CUCF(CF3A * lin[iin-1] + CF3B * lin[iin+0] + CF3C * lin[iin+1]);     // (offset = -1 ?)
 				if(x+i == width-2) // second pixel is also second to last (0*0) (image ends right after it started: 3 column wide)
-					lout[iout+1] = CF(CF3A * lin[iin+1] + CF3B * lin[iin+0] + CF3C * lin[iin-1]); // coeff in reverse order now
+					lout[iout+1] = CUCF(CF3A * lin[iin+1] + CF3B * lin[iin+0] + CF3C * lin[iin-1]); // coeff in reverse order now
 				else // normal second pixel (0*00)
-					lout[iout+1] = CF(CF4A * lin[iin-1] + CF4B * lin[iin+0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin+1
+					lout[iout+1] = CUCF(CF4A * lin[iin-1] + CF4B * lin[iin+0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin+1
 			}
 			else if(x+i == width-2) // second to last pixel (00*0) (3-wide image already handled in if(x+i==1))
 			{
-				lout[iout+0] = CF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin+0] + CF4A * lin[iin+1]); // offset=iin+1
-				lout[iout+1] = CF(CF3A * lin[iin+1] + CF3B * lin[iin+0] + CF3C * lin[iin-1]); // coeff in reverse order now
+				lout[iout+0] = CUCF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin+0] + CF4A * lin[iin+1]); // offset=iin+1
+				lout[iout+1] = CUCF(CF3A * lin[iin+1] + CF3B * lin[iin+0] + CF3C * lin[iin-1]); // coeff in reverse order now
 			}
 			else if(x+i == width-1) // last pixel (000*)
 			{
-				lout[iout+0] = CF(CF3X * lin[iin-0] + CF3Y * lin[iin-1] + CF3Z * lin[iin-2]);
-				lout[iout+1] = CF(CF2A * lin[iin-0] + CF2B * lin[iin-1]);
+				lout[iout+0] = CUCF(CF3X * lin[iin-0] + CF3Y * lin[iin-1] + CF3Z * lin[iin-2]);
+				lout[iout+1] = CUCF(CF2A * lin[iin-0] + CF2B * lin[iin-1]);
 			}
 			else // normal middle pixels (...00*00...)
 			{
-				lout[iout+0] = CF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin+0] + CF4A * lin[iin+1]); // offset=iin+1
-				lout[iout+1] = CF(CF4A * lin[iin-1] + CF4B * lin[iin+0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin+1
+				lout[iout+0] = CUCF(CF4D * lin[iin-2] + CF4C * lin[iin-1] + CF4B * lin[iin+0] + CF4A * lin[iin+1]); // offset=iin+1
+				lout[iout+1] = CUCF(CF4A * lin[iin-1] + CF4B * lin[iin+0] + CF4C * lin[iin+1] + CF4D * lin[iin+2]); // offset=iin+1
 			}
 		}
 	}
@@ -865,31 +867,31 @@ __global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout, int wid
 
 			if(y+i == 0) // first pixel (*000)
 			{
-				cout[iout  ] = CF(CF2A * cin[iin] + CF2B * cin[iin+s1]);
-				cout[iout+w] = CF(CF3X * cin[iin] + CF3Y * cin[iin+s1] + CF3Z * cin[iin+s2]);
+				cout[iout  ] = CUCF(CF2A * cin[iin] + CF2B * cin[iin+s1]);
+				cout[iout+w] = CUCF(CF3X * cin[iin] + CF3Y * cin[iin+s1] + CF3Z * cin[iin+s2]);
 			}
 			else if(y+i == 1) // second pixel (0*00)
 			{
-				cout[iout  ] = CF(CF3A * cin[iin-s1] + CF3B * cin[iin+0] + CF3C * cin[iin+s1]);     // (offset = -1 ?)
+				cout[iout  ] = CUCF(CF3A * cin[iin-s1] + CF3B * cin[iin+0] + CF3C * cin[iin+s1]);     // (offset = -1 ?)
 				if(x+i == height-2) // second pixel is also second to last (0*0) (image ends right after it started: 3 column wide)
-					cout[iout+w] = CF(CF3A * cin[iin+s1] + CF3B * cin[iin   ] + CF3C * cin[iin-s1]);
+					cout[iout+w] = CUCF(CF3A * cin[iin+s1] + CF3B * cin[iin   ] + CF3C * cin[iin-s1]);
 				else // normal second pixel (0*00)
-					cout[iout+w] = CF(CF4A * cin[iin-s1] + CF4B * cin[iin +0] + CF4C * cin[iin+s1] + CF4D * cin[iin+s2]);
+					cout[iout+w] = CUCF(CF4A * cin[iin-s1] + CF4B * cin[iin +0] + CF4C * cin[iin+s1] + CF4D * cin[iin+s2]);
 			}
 			else if(y+i == height-2) // second to last pixel (00*0) (3-wide image already handled in if(x+i==1))
 			{
-				cout[iout  ] = CF(CF4D * cin[iin-s2] + CF4C * cin[iin-s1] + CF4B * cin[iin +0] + CF4A * cin[iin+s1]);
-				cout[iout+w] = CF(CF3A * cin[iin+s1] + CF3B * cin[iin +0] + CF3C * cin[iin-s1]);
+				cout[iout  ] = CUCF(CF4D * cin[iin-s2] + CF4C * cin[iin-s1] + CF4B * cin[iin +0] + CF4A * cin[iin+s1]);
+				cout[iout+w] = CUCF(CF3A * cin[iin+s1] + CF3B * cin[iin +0] + CF3C * cin[iin-s1]);
 			}
 			else if(y+i == height-1) // last pixel (000*)
 			{
-				cout[iout  ] = CF(CF3X * cin[iin-0] + CF3Y * cin[iin-s1] + CF3Z * cin[iin-s2]);
-				cout[iout+w] = CF(CF2A * cin[iin-0] + CF2B * cin[iin-s1]);
+				cout[iout  ] = CUCF(CF3X * cin[iin-0] + CF3Y * cin[iin-s1] + CF3Z * cin[iin-s2]);
+				cout[iout+w] = CUCF(CF2A * cin[iin-0] + CF2B * cin[iin-s1]);
 			}
 			else // normal middle pixels (...00*00...)
 			{
-				cout[iout  ] = CF(CF4D * cin[iin-s2] + CF4C * cin[iin-s1] + CF4B * cin[iin +0] + CF4A * cin[iin+s1]);
-				cout[iout+w] = CF(CF4A * cin[iin-s1] + CF4B * cin[iin +0] + CF4C * cin[iin+s1] + CF4D * cin[iin+s2]);
+				cout[iout  ] = CUCF(CF4D * cin[iin-s2] + CF4C * cin[iin-s1] + CF4B * cin[iin +0] + CF4A * cin[iin+s1]);
+				cout[iout+w] = CUCF(CF4A * cin[iin-s1] + CF4B * cin[iin +0] + CF4C * cin[iin+s1] + CF4D * cin[iin+s2]);
 			}
 		}
 	}
@@ -897,8 +899,6 @@ __global__ void njCudaUpsampleV(unsigned char* cin, unsigned char* cout, int wid
 	//c->stride = c->width;
 	//c->pixels = out;
 }
-
-#define CF(x) njClip(((x) + 64) >> 7) // redefine non-CUDA version
 
 NJ_INLINE void njUpsampleH(nj_component_t* c) {
 	const int xmax = c->width - 3;
@@ -1143,7 +1143,6 @@ NJ_INLINE void njCudaConvert(void) {
 	
 	if (nj.ncomp == 3) {
 		// convert to RGB (8-stride may be already removed either horizontally or vertically in Upsample)
-		int x, yy;
 
 		dim3 dimBlock (8, 32);	// thread per grid cell: 8x32=256 thread per grid
 		dim3 dimGrid (((nj.width+PX_PER_THREAD-1)/PX_PER_THREAD + 7)/8, (nj.height+31)/32);
@@ -1169,25 +1168,6 @@ NJ_INLINE void njCudaConvert(void) {
 		if(failed(cudaMemcpy(nj.rgb, nj.curgb, nj.width * nj.height * 3, cudaMemcpyDeviceToHost)))
 			printf("memcpy rgb d2host fallita\n");
 		cudaFree(nj.curgb);
-
-		/*
-		unsigned char *prgb = nj.rgb;
-		const unsigned char *py  = nj.comp[0].pixels;
-		const unsigned char *pcb = nj.comp[1].pixels;
-		const unsigned char *pcr = nj.comp[2].pixels;
-		for (yy = nj.height;  yy;  --yy) {
-			for (x = 0;  x < nj.width;  ++x) {
-				register int y = py[x] << 8;
-				register int cb = pcb[x] - 128;
-				register int cr = pcr[x] - 128;
-				*prgb++ = njClip((y            + 359 * cr + 128) >> 8);
-				*prgb++ = njClip((y -  88 * cb - 183 * cr + 128) >> 8);
-				*prgb++ = njClip((y + 454 * cb            + 128) >> 8);
-			}
-			py += nj.comp[0].stride;
-			pcb += nj.comp[1].stride;
-			pcr += nj.comp[2].stride;
-		}*/
 	} else if (nj.comp[0].width != nj.comp[0].stride) {
 		// grayscale -> only remove 8-stride
 		unsigned char *pin = &nj.comp[0].pixels[nj.comp[0].stride];
@@ -1253,8 +1233,9 @@ NJ_INLINE void njConvert(void) {
 	}
 }
 
-void njInit(void) {
+void njInit(int use_cuda) {
 	njFillMem(&nj, 0, sizeof(nj_context_t));
+	nj.use_cuda = use_cuda;
 }
 
 void njDone(void) {
@@ -1265,12 +1246,13 @@ void njDone(void) {
 		if (nj.comp[i].intpixels) njFreeMem((void*) nj.comp[i].intpixels);
 	}
 	if (nj.rgb) njFreeMem((void*) nj.rgb);
-	njInit();
+	njInit(nj.use_cuda);
 }
 
 /// Main call to decompress a JPEG
 nj_result_t njDecode(const void* jpeg, const int size) {
-	cudaDeviceReset();
+	if(nj.use_cuda)
+		cudaDeviceReset();
 	njDone();
 	nj.pos = (const unsigned char*) jpeg;
 	nj.size = size & 0x7FFFFFFF;
@@ -1285,7 +1267,10 @@ nj_result_t njDecode(const void* jpeg, const int size) {
 			case 0xC4: njDecodeDHT();  break;
 			case 0xDB: njDecodeDQT();  break;
 			case 0xDD: njDecodeDRI();  break;
-			case 0xDA: njCudaDecodeScan(); break; // CUDA mod
+			case 0xDA:
+				if(nj.use_cuda) njCudaDecodeScan();
+				else njDecodeScan();
+				break; // CUDA mod
 			case 0xFE: njSkipMarker(); break;
 			default:
 				if ((nj.pos[-1] & 0xF0) == 0xE0)
@@ -1296,8 +1281,11 @@ nj_result_t njDecode(const void* jpeg, const int size) {
 	}
 	if (nj.error != __NJ_FINISHED) return nj.error;
 	nj.error = NJ_OK;
-	//njConvert();
-	njCudaConvert();
+
+	if(nj.use_cuda)
+		njCudaConvert();
+	else
+		njConvert();
 	return nj.error;
 }
 

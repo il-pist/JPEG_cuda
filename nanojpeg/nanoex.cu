@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
 
 	start=clock();
     if (argc < 2) {
-        printf("Usage: %s <input.jpg> [<output.ppm>]\n", argv[0]);
+        printf("Usage: %s <input.jpg> [<output.ppm>] [-nocuda]\n", argv[0]);
         return 2;
     }
     f = fopen(argv[1], "rb");
@@ -47,7 +47,8 @@ int main(int argc, char* argv[]) {
     size = (int) fread(buf, 1, size, f);
     fclose(f);
 
-    njInit();
+	
+    njInit((argc>3 && strcmp(argv[3], "-nocuda")==0)? 0:1); // use_cuda=0 if "-nocuda" 3rd arg
     if (njDecode(buf, size)) {
         free((void*)buf);
         printf("Error decoding the input file.\n");
