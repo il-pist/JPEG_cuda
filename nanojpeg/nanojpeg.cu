@@ -635,12 +635,12 @@ NJ_INLINE void njCudaDecodeScan(void) {
 		//if(failed(cudaHostRegister(c->intpixels, sizeof(int) * c->stride * nj.mbheight * c->ssy << 3, cudaHostRegisterDefault)))
 		//	printf("cudaHostRegister intpixels component %d failed\n", i);
 
-		printf("doing malloc cuintpixels component %d ...\n", i);
-		if(failed(cudaMalloc((void**)&(c->cuintpixels), sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) // copy to GPU for IDFT
+		printf("doing malloc cuintpixels component %d size %d ...\n", i, (int) (sizeof(int) * c->stride * nj.mbheight * c->ssy << 3));
+		if(failed(cudaMalloc((void**)&(c->cuintpixels), sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) // alloc on GPU, working buff for IDFT
 			printf("malloc cuintpixels component %d failed\n", i);
 		
-		printf("doing malloc cupixels component %d ...\n", i);
-		if(failed(cudaMalloc((void**)&(c->cupixels), c->stride * nj.mbheight * c->ssy << 3))) // alloc cupixels for IDFT results
+		printf("doing malloc cupixels component %d size %d ...\n", i, (int) (c->stride * nj.mbheight * c->ssy << 3));
+		if(failed(cudaMalloc((void**)&(c->cupixels), c->stride * nj.mbheight * c->ssy << 3))) // alloc cupixels on GPU, for IDFT results
 			printf("malloc cupixels component %d failed\n", i);
 		//if(failed(cudaMemcpy( c->cupixels, c->pixels, c->stride * nj.mbheight * c->ssy << 3, cudaMemcpyHostToDevice )))
 		//	printf("memcpy iniziale component failed\n");
@@ -676,6 +676,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 					printf("component %d: memcpy cuintpix w/offset %08lx intpix w/offset %08lx\n", i,
 						(unsigned long) ((c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)),
 						(unsigned long) ((c->intpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)));
+					printf("component %d: memcpy size %d\n", i, (int) (sizeof(int) * c->stride * stream_mby * c->ssy << 3));
 					if(failed(cudaMemcpy(      // OSS. advance memory pointers to only pick MCBs belonging to this stream
 						(c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3), // stream_i * stream_n_mcb == height raggiunta
 						(c->intpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3),   // without sizeof(int), already intptr
@@ -716,10 +717,8 @@ NJ_INLINE void njCudaDecodeScan(void) {
 
 					if (failed(cudaPeekAtLastError()))
 						printf("error ColIDCT component %d failed\n", i);
-					if(failed(cudaDeviceSynchronize())) // ==================================
-						printf("sync after ColIDCT component %d failed.\n", i);
-					if(failed(cudaFree(c->cuintpixels)))
-						printf("free cuintpixels after IDCT component %d failed\n", i);
+					//if(failed(cudaDeviceSynchronize())) // ==================================
+					//	printf("sync after ColIDCT component %d failed.\n", i);
 				}
 				
 
@@ -748,6 +747,8 @@ NJ_INLINE void njCudaDecodeScan(void) {
 	{
 		c = &(nj.comp[i]);
 
+		if(failed(cudaFree(c->cuintpixels)))
+			printf("free cuintpixels after IDCT component %d failed\n", i);
 		if(failed(cudaHostUnregister(c->intpixels)))
 			printf("cudaHostUnregister intpixels component %d failed\n", i);
 	}
