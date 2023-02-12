@@ -623,6 +623,15 @@ NJ_INLINE void njCudaDecodeScan(void) {
 	dim3 dimBlock, dimGrid;
 	int rstcount = nj.rstinterval, nextrst = 0;
 	nj_component_t* c;
+
+	for(stream_i=0; stream_i<NSTR; stream_i++)
+	{
+		printf("doing cudaStreamCreate(%016lx) stream %d ... ", (unsigned long) &(nj.custreams[stream_i]), stream_i); // TODO togliere debug
+		if(failed(cudaStreamCreate(&(nj.custreams[stream_i]))))
+			printf("failed cudaStreamCreate stream %d\n", stream_i);
+		printf("done cudaStreamCreate(%016lx) stream %d .\n", (unsigned long) nj.custreams[stream_i], stream_i);
+	}
+
 	njDecodeLength();
 	njCheckError();
 	if (nj.length < (4 + 2 * nj.ncomp)) njThrow(NJ_SYNTAX_ERROR);
@@ -640,7 +649,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 
 	printf("Starting njCudaDecodeScan..........................\n");
 	if(failed(cudaDeviceSynchronize())) // ==================================
-		printf("sync after ColIDCT component %d failed.\n", i);
+		printf("sync at beginning of njCudaDecodeScan() failed.\n");
 	for(i=0; i<nj.ncomp; i++)
 	{
 		c = &(nj.comp[i]);
@@ -680,6 +689,11 @@ NJ_INLINE void njCudaDecodeScan(void) {
 
 			if(stream_mby >= stream_n_mcb || mby >= nj.mbheight)
 			{
+				//printf("killing everything with cudaStreamDestroy %016lx (addr %016lx) stream %d ... ", (unsigned long) nj.custreams[stream_i], (unsigned long) &(nj.custreams[stream_i]), stream_i); // TODO togliere debug
+				//if(failed(cudaStreamDestroy(nj.custreams[stream_i])))
+				//	printf("failed cudaStreamDestroy stream %d\n", stream_i);
+				//printf("done cudaStreamDestroy(%016lx) stream %d .\n", (unsigned long) nj.custreams[stream_i], stream_i);
+				
 				// start row/col IDCT (on all components) ---- FOR THIS STREAM: 1/NSTR of the whole height ----
 				for(i=0; i<nj.ncomp; i++)
 				{
@@ -692,12 +706,14 @@ NJ_INLINE void njCudaDecodeScan(void) {
 						(unsigned long) ((c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)),
 						(unsigned long) ((c->intpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)));
 					printf("component %d: memcpy size %d\n", i, (int) (sizeof(int) * c->stride * stream_mby * c->ssy << 3));
-					if(failed(cudaMemcpy(      // OSS. advance memory pointers to only pick MCBs belonging to this stream
+					//if(failed(cudaMemcpy(      // OSS. advance memory pointers to only pick MCBs belonging to this stream
+					if(failed(cudaMemcpyAsync(      // Async version! OSS. advance memory pointers to only pick MCBs belonging to this stream
 						(c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3), // stream_i * stream_n_mcb == height raggiunta
 						(c->intpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3),   // without sizeof(int), already intptr
 						sizeof(int) * c->stride * stream_mby * c->ssy << 3, // only copy MCBs of this stream
-						cudaMemcpyHostToDevice )))
-						printf("memcpy cuintpixels component %d failed\n", i);
+						cudaMemcpyHostToDevice,
+						nj.custreams[stream_i])))
+						printf("memcpy async cuintpixels component %d failed\n", i);
 					
 					//if(failed(cudaDeviceSynchronize())) // ================================== we want async copy
 					//	printf("sync after memcpy cuintpixels component %d failed.\n", i);
@@ -710,7 +726,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 
 					dimBlock = dim3 (4, 32);	// thread per grid cell (block): 4x32=128 thread per block (32x32 pixel elaborati)
 					dimGrid = dim3 (((c->stride+7)/8 + 3)/4, ((stream_mby * c->ssy << 3) /*c->height*/+31)/32); // grid size (accounting for CUDA block size, and the 8 pixel per thread treated by RowIDCT)
-					njCudaRowIDCT<<<dimGrid, dimBlock>>>(
+					njCudaRowIDCT<<<dimGrid, dimBlock, 0, nj.custreams[stream_i]>>>(
 						(c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3),
 						c->stride,
 						(stream_mby * c->ssy << 3) /*c->height*/); // height: only MCBs of this stream
@@ -724,7 +740,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 						(unsigned long) ((c->cupixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)));
 					dimBlock = dim3 (32, 4);	// thread per grid cell (block): 32x4=128 thread per block (32x32 pixel elaborati)
 					dimGrid = dim3 ((c->stride + 31)/32, (((stream_mby * c->ssy << 3) /*c->height*/+7)/8 + 3)/4); // grid size (accounting for CUDA block size, and the 8 vertical pixel per thread treated by ColIDCT)
-					njCudaColIDCT<<<dimGrid, dimBlock>>>(
+					njCudaColIDCT<<<dimGrid, dimBlock, 0, nj.custreams[stream_i]>>>(
 						(c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3),
 						(c->cupixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3),
 						c->stride,
@@ -1320,13 +1336,13 @@ void njInit(int use_cuda) {
 
 	if(nj.use_cuda)
 	{
-		for(i=0; i<NSTR; i++)
+		/*for(i=0; i<NSTR; i++)
 		{
 			printf("doing cudaStreamCreate(%016lx) stream %d ... ", (unsigned long) &(nj.custreams[i]), i); // TODO togliere debug
 			if(failed(cudaStreamCreate(&(nj.custreams[i]))))
 				printf("failed cudaStreamCreate stream %d\n", i);
 			printf("done cudaStreamCreate(%016lx) stream %d .\n", (unsigned long) nj.custreams[i], i);
-		}
+		}*/
 	}
 }
 
