@@ -630,9 +630,10 @@ NJ_INLINE void njCudaDecodeScan(void) {
 	{
 		c = &(nj.comp[i]);
 		
-		printf("doing cudaHostRegister intpixels component %d ...\n", i);
-		if(failed(cudaHostRegister(c->intpixels, sizeof(int) * c->stride * nj.mbheight * c->ssy << 3, cudaHostRegisterDefault)))
-			printf("cudaHostRegister intpixels component %d failed\n", i);
+		printf("(DISABLED) doing cudaHostRegister intpixels component %d ...\n", i);
+		printf("size of locked memory: %d bytes\n", (int) (sizeof(int) * c->stride * nj.mbheight * c->ssy << 3));
+		//if(failed(cudaHostRegister(c->intpixels, sizeof(int) * c->stride * nj.mbheight * c->ssy << 3, cudaHostRegisterDefault)))
+		//	printf("cudaHostRegister intpixels component %d failed\n", i);
 
 		printf("doing malloc cuintpixels component %d ...\n", i);
 		if(failed(cudaMalloc((void**)&(c->cuintpixels), sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) // copy to GPU for IDFT
@@ -671,6 +672,10 @@ NJ_INLINE void njCudaDecodeScan(void) {
 					printf("  ==== starting IDCT part %d (made of %d vertical MCBs) component %d ====\n", stream_i, stream_mby, i);
 
 					// TODO async
+					printf("component %d: memcpy cuintpix          %08lx intpix          %08lx\n", i, (unsigned long) c->cuintpixels, (unsigned long) c->intpixels);
+					printf("component %d: memcpy cuintpix w/offset %08lx intpix w/offset %08lx\n", i,
+						(unsigned long) ((c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)),
+						(unsigned long) ((c->intpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)));
 					if(failed(cudaMemcpy(      // OSS. advance memory pointers to only pick MCBs belonging to this stream
 						(c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3), // stream_i * stream_n_mcb == height raggiunta
 						(c->intpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3),   // without sizeof(int), already intptr
@@ -684,8 +689,8 @@ NJ_INLINE void njCudaDecodeScan(void) {
 					
 					//if(failed(cudaDeviceSynchronize())) // ==================================
 					//	printf("sync after UpsampleH component %d failed.\n", i);
-					printf("component %d: cuintpix %08lx\n", i, (unsigned long) c->cuintpixels);
-					printf("component %d: cuintpix w/offset %08lx\n", i, (unsigned long) ((c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)));
+					printf("component %d: row cuintpix          %08lx\n", i, (unsigned long) c->cuintpixels);
+					printf("component %d: row cuintpix w/offset %08lx\n", i, (unsigned long) ((c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)));
 
 					dimBlock = dim3 (4, 32);	// thread per grid cell (block): 4x32=128 thread per block (32x32 pixel elaborati)
 					dimGrid = dim3 (((c->stride+7)/8 + 3)/4, ((stream_mby * c->ssy << 3) /*c->height*/+31)/32); // grid size (accounting for CUDA block size, and the 8 pixel per thread treated by RowIDCT)
@@ -697,8 +702,8 @@ NJ_INLINE void njCudaDecodeScan(void) {
 					if (failed(cudaPeekAtLastError()))
 						printf("error RowIDCT component %d failed\n", i);
 					
-					printf("component %d: cuintpix          %08lx cupix          %08lx\n", i, (unsigned long) c->cuintpixels, (unsigned long) c->cupixels);
-					printf("component %d: cuintpix w/offset %08lx cupix w/offset %08lx\n", i,
+					printf("component %d: col cuintpix          %08lx cupix          %08lx\n", i, (unsigned long) c->cuintpixels, (unsigned long) c->cupixels);
+					printf("component %d: col cuintpix w/offset %08lx cupix w/offset %08lx\n", i,
 						(unsigned long) ((c->cuintpixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)),
 						(unsigned long) ((c->cupixels) + (stream_i * stream_n_mcb * c->stride * c->ssy << 3)));
 					dimBlock = dim3 (32, 4);	// thread per grid cell (block): 32x4=128 thread per block (32x32 pixel elaborati)
