@@ -32,7 +32,7 @@
      inkscape:window-x="-6"
      inkscape:window-y="1094"
      inkscape:window-maximized="0"
-     inkscape:current-layer="g1904-3">
+     inkscape:current-layer="g1904-6-0">
     <inkscape:grid
        type="xygrid"
        id="grid132"
@@ -118,32 +118,100 @@
       <rect
          style="fill:none;stroke:#000000;stroke-width:0.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
          id="rect239-2"
-         width="6"
+         width="8"
          height="16"
          x="11"
          y="4" />
       <text
          xml:space="preserve"
          style="font-size:2.11667px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
-         x="11.88333"
-         y="11.745175"
+         x="13.610418"
+         y="10.746209"
          id="text1731-9"><tspan
            sodipodi:role="line"
            style="stroke-width:0.264583"
-           x="11.88333"
-           y="11.745175"
-           id="tspan1891-1">Row</tspan></text>
+           x="13.610418"
+           y="10.746209"
+           id="tspan1891-1">UP</tspan></text>
       <text
          xml:space="preserve"
          style="font-size:2.11667px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
-         x="11.698328"
-         y="13.756027"
+         x="11.479796"
+         y="12.549838"
          id="text1897-2"><tspan
            sodipodi:role="line"
            id="tspan1895-7"
            style="stroke-width:0.264583"
-           x="11.698328"
-           y="13.756027">IDCT</tspan></text>
+           x="11.479796"
+           y="12.549838">Sample</tspan></text>
+      <text
+         xml:space="preserve"
+         style="font-size:2.11667px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="14.257925"
+         y="14.75551"
+         id="text2027"><tspan
+           sodipodi:role="line"
+           id="tspan2025"
+           style="stroke-width:0.264583"
+           x="14.257925"
+           y="14.75551">H</tspan></text>
+    </g>
+    <g
+       id="g1904-6-0"
+       transform="translate(32)">
+      <rect
+         style="fill:none;stroke:#000000;stroke-width:0.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="rect239-2-9"
+         width="8"
+         height="16"
+         x="11"
+         y="4"
+         inkscape:transform-center-x="4"
+         inkscape:transform-center-y="-8" />
+      <text
+         xml:space="preserve"
+         style="font-size:2.11667px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="13.610418"
+         y="10.746209"
+         id="text1731-9-3"><tspan
+           sodipodi:role="line"
+           style="stroke-width:0.264583"
+           x="13.610418"
+           y="10.746209"
+           id="tspan1891-1-6">UP</tspan></text>
+      <text
+         xml:space="preserve"
+         style="font-size:2.11667px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="11.479796"
+         y="12.549838"
+         id="text1897-2-0"><tspan
+           sodipodi:role="line"
+           id="tspan1895-7-6"
+           style="stroke-width:0.264583"
+           x="11.479796"
+           y="12.549838">Sample</tspan></text>
+      <text
+         xml:space="preserve"
+         style="font-size:2.11667px;line-height:1.25;font-family:sans-serif;stroke-width:0.264583"
+         x="14.399002"
+         y="14.75551"
+         id="text2027-2"><tspan
+           sodipodi:role="line"
+           id="tspan2025-6"
+           style="stroke-width:0.264583"
+           x="14.399002"
+           y="14.75551">V</tspan></text>
+      <rect
+         style="fill:none;stroke:#000000;stroke-width:0.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         id="rect2086"
+         width="82.999992"
+         height="30.999998"
+         x="-25"
+         y="3" />
+      <path
+         style="fill:none;stroke:#000000;stroke-width:0.264583px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+         d="m -20,34 v 5.999999 H 64 V 7.9999998 h -6.000001"
+         id="path2153" />
     </g>
   </g>
 </svg>
