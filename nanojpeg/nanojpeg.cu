@@ -451,7 +451,22 @@ NJ_INLINE void njDecodeSOF(void) {
 		c->stride = nj.mbwidth * c->ssx << 3;
 		if (((c->width < 3) && (c->ssx != ssxmax)) || ((c->height < 3) && (c->ssy != ssymax))) njThrow(NJ_UNSUPPORTED);
 		if (!(c->pixels = (unsigned char*) njAllocMem(c->stride * nj.mbheight * c->ssy << 3))) njThrow(NJ_OUT_OF_MEM);
-		if (!(c->intpixels = (int*) njAllocMem(sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) njThrow(NJ_OUT_OF_MEM);
+		if(nj.use_cuda)
+		{
+			if(failed(cudaHostAlloc(
+				(void**) &(c->intpixels),
+				sizeof(int) * c->stride * nj.mbheight * c->ssy << 3,
+				cudaHostAllocMapped)))
+			{
+				printf("cudaHostAlloc() with cudaHostAllocMapped failed, size %d component %d\n",
+					(int) (sizeof(int) * c->stride * nj.mbheight * c->ssy << 3), i);
+				njThrow(NJ_OUT_OF_MEM);
+			}
+		}
+		else
+		{
+			if (!(c->intpixels = (int*) njAllocMem(sizeof(int) * c->stride * nj.mbheight * c->ssy << 3))) njThrow(NJ_OUT_OF_MEM);
+		}
 	}
 	if (nj.ncomp == 3) {
 		nj.rgb = (unsigned char*) njAllocMem(nj.width * nj.height * nj.ncomp);
@@ -715,6 +730,8 @@ NJ_INLINE void njCudaDecodeScan(void) {
 						c->stride,
 						(stream_mby * c->ssy << 3) /*c->height*/); // stream_n_mcb (or less for last stream)
 
+					printf("col done component %d\n", i);
+
 					if (failed(cudaPeekAtLastError()))
 						printf("error ColIDCT component %d failed\n", i);
 					//if(failed(cudaDeviceSynchronize())) // ==================================
@@ -739,7 +756,7 @@ NJ_INLINE void njCudaDecodeScan(void) {
 	}
 
 	// TODO probabilmente CudaDeviceSynchronize?
-
+	printf("whole DCT done.\n");
 	if(failed(cudaDeviceSynchronize())) // ================================== we want async copy
 		printf("sync after memcpy cuintpixels component %d failed.\n", i);
 
@@ -749,8 +766,8 @@ NJ_INLINE void njCudaDecodeScan(void) {
 
 		if(failed(cudaFree(c->cuintpixels)))
 			printf("free cuintpixels after IDCT component %d failed\n", i);
-		if(failed(cudaHostUnregister(c->intpixels)))
-			printf("cudaHostUnregister intpixels component %d failed\n", i);
+		//if(failed(cudaHostUnregister(c->intpixels))) // TODO unregister inutile con CudaHostAlloc()
+		//	printf("cudaHostUnregister intpixels component %d failed\n", i);
 	}
 	
 	/*
@@ -1317,18 +1334,32 @@ void njDone(void) {
 	int i;
 	if(nj.use_cuda)
 	{
+		/* TODO chiudere gli stream alla fine...
+		printf("peeking last error before cudaStreamDestroy()...\n");
+		if(failed(cudaPeekAtLastError()))
+			printf("there was some error before cudaStreamDestroy().\n");
+		if(failed(cudaDeviceSynchronize())) // ==================================
+			printf("sync before cudaStreamDestroy failed.\n");
 		for(i=0; i<NSTR; i++)
 		{
-			printf("doing cudaStreamDestroy(%016lx) stream %d ... ", (unsigned long) &(nj.custreams[i]), i); // TODO togliere debug
+			printf("doing cudaStreamDestroy %016lx (addr %016lx) stream %d ... ", (unsigned long) nj.custreams[i], (unsigned long) &(nj.custreams[i]), i); // TODO togliere debug
 			if(failed(cudaStreamDestroy(nj.custreams[i])))
 				printf("failed cudaStreamDestroy stream %d\n", i);
-			printf("done cudaStreamCreate(%016lx) stream %d .\n", (unsigned long) nj.custreams[i], i);
-		}
+			printf("done cudaStreamDestroy(%016lx) stream %d .\n", (unsigned long) nj.custreams[i], i);
+		}*/
 	}
 	for (i = 0;  i < 3;  ++i) // TODO non dovrebbe essere i < nj.ncomp?
 	{
 		if (nj.comp[i].pixels) njFreeMem((void*) nj.comp[i].pixels);
-		if (nj.comp[i].intpixels) njFreeMem((void*) nj.comp[i].intpixels);
+		if(nj.use_cuda)
+		{
+			printf("doing cudaFreeHost(intpixels) component %d\n", i);
+			if (nj.comp[i].intpixels) cudaFreeHost((void*) nj.comp[i].intpixels); // free page-locked memory from cudaHostAlloc()
+		}
+		else
+		{
+			if (nj.comp[i].intpixels) njFreeMem((void*) nj.comp[i].intpixels);
+		}
 	}
 	if (nj.rgb) njFreeMem((void*) nj.rgb);
 	njInit(nj.use_cuda);
