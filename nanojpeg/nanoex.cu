@@ -23,6 +23,7 @@
 
 int main(int argc, char* argv[]) {
     int size;
+	nj_result_t error;
     char *buf;
     FILE *f;
 	clock_t start, end;
@@ -49,9 +50,10 @@ int main(int argc, char* argv[]) {
 
 	
     njInit((argc>3 && strcmp(argv[3], "-nocuda")==0)? 0:1); // use_cuda=0 if "-nocuda" 3rd arg
-    if (njDecode(buf, size)) {
+	error = njDecode(buf, size);
+    if (error) {
         free((void*)buf);
-        printf("Error decoding the input file.\n");
+        printf("Error %d decoding the input file.\n", (int) error);
         return 1;
     }
     free((void*)buf);
