@@ -1,0 +1,9 @@
+{signal: [
+  {name: 'njReadBlock',     wave: '03.4.5.6.0.|', data: ['slice0', 'slice1', 'slice2', 'slice3']},
+  {name: 'custream[0]',     wave: '0..30......|', data: ['IDCT']},
+  {name: 'custream[1]',     wave: '0....40....|', data: ['IDCT']},
+  {name: 'custream[2]',     wave: '0......50..|', data: ['IDCT']},
+  {name: 'custream[3]',     wave: '0........60|', data: ['IDCT']},
+  {name: 'default stream',  wave: '0..........|7..8..7..9..0', data: ['UpsampleH', 'UpsampleV', 'UpsampleH', 'YCbCr->RGB']},
+  {name: 'njGetImage',      wave: '0..........|............2.0', data: ['data ready']}
+]}
