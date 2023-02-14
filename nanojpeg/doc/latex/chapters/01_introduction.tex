@@ -1,0 +1,10 @@
+\chapter{Introduction} \label{Intruduction}
+
+JPEG image decompression happens very often in modern consumer software. Small images such as icons on web pages may be decoded in general purpose CPUs with sufficient performance, however handling big images on dedicated hardware could at least offload the CPU, but also speed up quite substantially.
+
+This document describes the effort of exploiting \textbf{NVIDIA CUDA} parallel computation inside \textbf{NanoJPEG}, a JPEG decoding library. The sources of NanoJPEG are freely available from its writer's website \cite{nanojpeg_site}. The document consists of:
+\begin{itemize}
+    \item \autoref{Background} essential JPEG notions needed for decoding
+    \item \autoref{implementation} details about the CUDA implementation
+    \item \autoref{results} where results are presented illustrating the benefits obtained with the parallel implementation and some conclusions on the use of a parallel approach for JPEG encoding are drawn.
+\end{itemize}

@@ -565,7 +565,10 @@
     <g
        id="g1904"
        inkscape:label="RowIDCT"
-       transform="translate(21)">
+       transform="translate(21)"
+       inkscape:export-filename="flow01.pdf"
+       inkscape:export-xdpi="96"
+       inkscape:export-ydpi="96">
       <rect
          style="fill:none;stroke:#000000;stroke-width:0.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
          id="rect239"
